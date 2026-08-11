@@ -19,7 +19,7 @@ More panels may be added later, but this design does not build empty abstraction
 
 Build `ghpulse` on Claudit's proven backend/frontend conventions and pin `gh-widgets` as a read-only submodule. Refactor `gh-widgets` minimally upstream so its GitHub acquisition and normalization are a supported importable API while its existing CLIs remain independently runnable. `ghpulse` owns PostgreSQL persistence and dashboard aggregation; `gh-widgets` remains the standalone SVG renderer.
 
-The boundary between them is a versioned normalized snapshot contract, not either renderer's private cache layout. A normal `gh-widgets` run still fetches, caches, and renders by itself. A render-only invocation may consume a snapshot produced by `ghpulse` without fetching the same GitHub data again.
+The boundary between them is a versioned normalized snapshot contract, not either renderer's private cache layout. `ghpulse` imports the public acquisition/normalization module. Every `gh-widgets` renderer continues fetching, caching, and rendering through its existing standalone path; the dashboard does not feed snapshots into widget renderers.
 
 ## Goals
 
@@ -55,7 +55,7 @@ The boundary between them is a versioned normalized snapshot contract, not eithe
 - normalizing repositories, issues, and pull requests into provider-neutral dictionaries;
 - reading and writing the versioned snapshot atomically.
 
-Existing renderer commands call that module internally but keep their existing default behavior, cache durability, CLI flags, and output. An optional snapshot/render-only path is additive.
+The public module is an import boundary for pinned consumers. Existing renderer commands keep their current behavior, cache durability, CLI flags, and output unchanged; adding snapshot modes to those commands would couple a narrow dashboard interchange schema to renderer-private profile and impact data that it does not contain.
 
 ### ghpulse backend
 
@@ -187,7 +187,7 @@ The exported JSON is a presentation input, not a copy of PostgreSQL and not a re
 - normalized current issues;
 - normalized current pull requests.
 
-It is written atomically through the shared `gh-widgets` module. `gh-widgets` validates the schema version before render-only use. Missing future sections are explicit and do not silently fall back to stale data. With no snapshot option, every existing standalone renderer continues using its current fetch/cache path.
+It is written atomically and validated through the shared `gh-widgets` module. Missing future sections are explicit and do not silently fall back to stale data. The contract is consumed by ghpulse's ingest adapter, not by the SVG renderer CLIs; every standalone renderer continues using its existing fetch/cache path and private renderer-specific data.
 
 ## Authentication and guest behavior
 
@@ -200,7 +200,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 - GraphQL errors and incomplete pagination fail the sync rather than committing a partial reconciliation.
 - A failed incremental sync preserves current rows, current high-water state, and the last good dashboard response.
 - A failed full sync never deletes unseen rows.
-- A corrupt or incompatible exported snapshot is rejected by `gh-widgets`; normal standalone fetching remains available.
+- A corrupt or incompatible exported snapshot is rejected by the public `gh-widgets` data API; standalone renderers remain independent of that interchange file.
 - Unknown issue state reasons remain stored but do not enter either final-outcome series until explicitly mapped.
 - Missing outcome timestamps exclude that outcome event and surface an ingest warning; timestamps are never guessed.
 - Health reports the last successful ingest, current progress, and most recent error.
