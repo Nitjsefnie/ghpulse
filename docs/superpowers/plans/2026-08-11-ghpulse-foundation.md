@@ -12,7 +12,7 @@
 
 - Product/repository name is `ghpulse`; the current checkout directory may be renamed later.
 - One configured GitHub account; no GitHub OAuth and no per-viewer account.
-- Public external repositories only, using the account + organisations + additive `GH_EXTRA_INSIDERS` rule from gh-widgets.
+- Public external repositories only; gh-widgets uses the account login and explicitly public organisations transiently during acquisition and never serializes membership relationships.
 - Login plus guest access; both may use range and repository filters.
 - Initial release has exactly two panels: issues and pull requests.
 - Current state only: old final outcomes disappear when GitHub's current state changes.
@@ -204,7 +204,7 @@ Expected: import failure.
 
 - [ ] **Step 3: Implement transactional upserts**
 
-Upsert repositories first, then issues and PRs. Every mutable field is replaced from the current snapshot. Refresh insider classification for every repository owner on successful runs. Record per-run counts.
+Upsert repositories first, then issues and PRs. Every mutable field is replaced from the current snapshot. Reject any record that is not already public and external even though the pinned upstream producer enforces that boundary. Record per-run counts.
 
 - [ ] **Step 4: Implement safe reconciliation and high-water state**
 

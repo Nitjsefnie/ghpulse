@@ -79,7 +79,7 @@ The existing bounded time-series geometry is generalized only as far as required
 
 The dashboard is for one configured account (`GH_USER`) and one GitHub token. A repository is external when its owner is neither the account login nor any organisation returned for that token, plus additive `GH_EXTRA_INSIDERS`. This is the same rule as `gh-widgets`.
 
-Identity and organisations are refreshed on every successful sync. If the insider set changes, all stored repositories are reclassified from their owner login without refetching each item. Only public repositories enter the dashboard or exported snapshot.
+Identity and public organisations are refreshed on every successful sync and used transiently to exclude owned repositories before snapshot serialization. Only public external repositories and their authored items enter the dashboard or exported snapshot; membership relationships are never serialized into the interchange file.
 
 ## Current-state data model
 
@@ -182,12 +182,11 @@ The exported JSON is a presentation input, not a copy of PostgreSQL and not a re
 
 - `schema_version`;
 - `generated_at` and source account identity;
-- current insiders;
 - normalized public external repositories;
 - normalized current issues;
 - normalized current pull requests.
 
-It is written atomically and validated through the shared `gh-widgets` module. Missing future sections are explicit and do not silently fall back to stale data. The contract is consumed by ghpulse's ingest adapter, not by the SVG renderer CLIs; every standalone renderer continues using its existing fetch/cache path and private renderer-specific data.
+It is written atomically and validated through the shared `gh-widgets` module using exact nested schemas. Unknown fields, private flags, invalid timestamps, broken repository references, and credential-bearing extras are rejected. Missing future sections are explicit and do not silently fall back to stale data. The contract is consumed by ghpulse's ingest adapter, not by the SVG renderer CLIs; every standalone renderer continues using its existing fetch/cache path and private renderer-specific data.
 
 ## Authentication and guest behavior
 
