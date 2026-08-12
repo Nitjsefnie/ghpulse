@@ -16,7 +16,9 @@ from backend.api_common import (
     _parse_range,
     as_utc,
     dense_bucket_bounds,
+    read_transaction,
     response_bucket,
+    utc_now,
 )
 from backend.cache import cache_response
 
@@ -93,7 +95,7 @@ def _event_union() -> str:
     """
 
 
-def _event_bounds(repository: str | None) -> datetime | None:
+def _event_bounds(connection, repository: str | None) -> datetime | None:
     repo_pred, repo_args = _repository_predicate(repository)
     query = f"""
         WITH event_union AS ({_event_union()})
@@ -101,17 +103,27 @@ def _event_bounds(repository: str | None) -> datetime | None:
         FROM event_union
         WHERE event_at IS NOT NULL {repo_pred}
     """
-    with db.viz_conn() as connection:
-        row = connection.execute(db.sql_text(query), repo_args).fetchone()
+    row = connection.execute(db.sql_text(query), repo_args).fetchone()
     return as_utc(row[0]) if row and row[0] is not None else None
 
 
-def build_window(rng: str, repository: str | None = None, *, now=None) -> RangeWindow:
+def build_window(
+    rng: str,
+    repository: str | None = None,
+    *,
+    now=None,
+    connection=None,
+) -> RangeWindow:
     """Resolve a requested range to a UTC half-open window."""
     delta = _parse_range(rng)
-    end = as_utc(now or datetime.now(timezone.utc))
+    end = as_utc(now or utc_now())
     if rng == "all":
-        start = _event_bounds(repository)
+        if connection is None:
+            with read_transaction() as read_connection:
+                return build_window(
+                    rng, repository, now=end, connection=read_connection
+                )
+        start = _event_bounds(connection, repository)
         if start is None:
             return RangeWindow(rng, end, end, _bucket_seconds(delta))
         span = end - start
@@ -120,24 +132,23 @@ def build_window(rng: str, repository: str | None = None, *, now=None) -> RangeW
     return RangeWindow(rng, start, end, _bucket_seconds(delta))
 
 
-def validate_repository(repository: str | None) -> None:
+def validate_repository(connection, repository: str | None) -> None:
     """Reject unknown, private, or non-external repository identifiers."""
     if repository is None:
         return
-    with db.viz_conn() as connection:
-        row = connection.execute(
-            """
-            SELECT 1
-            FROM repositories
-            WHERE node_id = %s AND is_private IS FALSE AND is_external IS TRUE
-            """,
-            (repository,),
-        ).fetchone()
+    row = connection.execute(
+        """
+        SELECT 1
+        FROM repositories
+        WHERE node_id = %s AND is_private IS FALSE AND is_external IS TRUE
+        """,
+        (repository,),
+    ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="repository not found")
 
 
-def _event_rows(window: RangeWindow, repository: str | None, phases: Phases):
+def _event_rows(connection, window: RangeWindow, repository: str | None, phases: Phases):
     repo_pred, repo_args = _repository_predicate(repository)
     query = f"""
         WITH event_union AS ({_event_union()})
@@ -155,12 +166,11 @@ def _event_rows(window: RangeWindow, repository: str | None, phases: Phases):
     """
     args: list[Any] = [window.bucket_s, window.bucket_s, window.start, window.end]
     args.extend(repo_args)
-    with db.viz_conn() as connection:
-        cursor = phases.execute("events", connection, db.sql_text(query), args)
-        return cursor.fetchall()
+    cursor = phases.execute("events", connection, db.sql_text(query), args)
+    return cursor.fetchall()
 
 
-def _summary_open_counts(window: RangeWindow, repository: str | None, phases: Phases):
+def _summary_open_counts(connection, window: RangeWindow, repository: str | None, phases: Phases):
     repo_pred, repo_args = _repository_predicate(repository)
     query = f"""
         SELECT
@@ -178,41 +188,38 @@ def _summary_open_counts(window: RangeWindow, repository: str | None, phases: Ph
              {repo_pred.replace('repository_id', 'p.repository_id')}) AS prs_open
     """
     args = [window.start, window.end, *repo_args, window.start, window.end, *repo_args]
-    with db.viz_conn() as connection:
-        cursor = phases.execute("open_summary", connection, db.sql_text(query), args)
-        row = cursor.fetchone()
+    cursor = phases.execute("open_summary", connection, db.sql_text(query), args)
+    row = cursor.fetchone()
     return (int(row[0] or 0), int(row[1] or 0)) if row else (0, 0)
 
 
-def _repository_rows(repository_ids: list[str]) -> list[dict]:
+def _repository_rows(connection, repository_ids: list[str]) -> list[dict]:
     if not repository_ids:
         return []
-    with db.viz_conn() as connection:
-        rows = connection.execute(
-            """
-            SELECT node_id, name_with_owner, url
-            FROM repositories
-            WHERE node_id = ANY(%s)
-              AND is_private IS FALSE AND is_external IS TRUE
-            ORDER BY name_with_owner
-            """,
-            (repository_ids,),
-        ).fetchall()
+    rows = connection.execute(
+        """
+        SELECT node_id, name_with_owner, url
+        FROM repositories
+        WHERE node_id = ANY(%s)
+          AND is_private IS FALSE AND is_external IS TRUE
+        ORDER BY name_with_owner
+        """,
+        (repository_ids,),
+    ).fetchall()
     return [
         {"node_id": node_id, "name_with_owner": name, "url": url}
         for node_id, name, url in rows
     ]
 
 
-def _last_ingest() -> str | None:
-    with db.viz_conn() as connection:
-        row = connection.execute(
-            """
-            SELECT last_committed_at
-            FROM sync_state
-            WHERE id = 1
-            """
-        ).fetchone()
+def _last_ingest(connection) -> str | None:
+    row = connection.execute(
+        """
+        SELECT last_committed_at
+        FROM sync_state
+        WHERE id = 1
+        """
+    ).fetchone()
     return _iso(row[0]) if row else None
 
 
@@ -220,13 +227,9 @@ def _fold_buckets(
     rows,
     window: RangeWindow,
     keys: tuple[str, ...],
-) -> tuple[list[dict], dict[str, int], set[str]]:
+) -> tuple[list[dict], dict[str, int]]:
     by_epoch: dict[int, dict[str, int]] = {}
     totals = {key: 0 for key in keys}
-    repository_ids: set[str] = set()
-    # Repository is intentionally not returned by the grouped query; the
-    # endpoint only needs it to build the public picker.  Derive IDs with a
-    # separate event query below, keeping bucket payloads compact.
     for epoch, _panel, kind, count in rows:
         epoch = int(epoch)
         if kind not in keys:
@@ -238,10 +241,10 @@ def _fold_buckets(
     buckets = []
     for start, end, epoch in dense_bucket_bounds(window.start, window.end, window.bucket_s):
         buckets.append(response_bucket(start, end, by_epoch.get(epoch, {key: 0 for key in keys})))
-    return buckets, totals, repository_ids
+    return buckets, totals
 
 
-def _event_repository_ids(window: RangeWindow, repository: str | None) -> list[str]:
+def _event_repository_ids(connection, window: RangeWindow, repository: str | None) -> list[str]:
     repo_pred, repo_args = _repository_predicate(repository)
     query = f"""
         WITH event_union AS ({_event_union()})
@@ -251,24 +254,23 @@ def _event_repository_ids(window: RangeWindow, repository: str | None) -> list[s
         ORDER BY repository_id
     """
     args: list[Any] = [window.start, window.end, *repo_args]
-    with db.viz_conn() as connection:
-        rows = connection.execute(db.sql_text(query), args).fetchall()
+    rows = connection.execute(db.sql_text(query), args).fetchall()
     return [str(row[0]) for row in rows]
 
 
-def _dashboard_build(window: RangeWindow, repository: str | None) -> dict:
+def _dashboard_build(connection, window: RangeWindow, repository: str | None) -> dict:
     phases = Phases("dashboard")
-    started = datetime.now(timezone.utc)
+    started = utc_now()
     with phases.step("sql"):
-        rows = _event_rows(window, repository, phases)
+        rows = _event_rows(connection, window, repository, phases)
         issue_rows = [row for row in rows if row[1] == "issues"]
         pr_rows = [row for row in rows if row[1] == "pull_requests"]
-        issue_buckets, issue_totals, _ = _fold_buckets(issue_rows, window, _ISSUE_KEYS)
-        pr_buckets, pr_totals, _ = _fold_buckets(pr_rows, window, _PR_KEYS)
-        issue_open, pr_open = _summary_open_counts(window, repository, phases)
-        repository_ids = _event_repository_ids(window, repository)
-        repositories = _repository_rows(repository_ids)
-        last_ingest = _last_ingest()
+        issue_buckets, issue_totals = _fold_buckets(issue_rows, window, _ISSUE_KEYS)
+        pr_buckets, pr_totals = _fold_buckets(pr_rows, window, _PR_KEYS)
+        issue_open, pr_open = _summary_open_counts(connection, window, repository, phases)
+        repository_ids = _event_repository_ids(connection, window, repository)
+        repositories = _repository_rows(connection, repository_ids)
+        last_ingest = _last_ingest(connection)
 
     phases.done(
         issues=len(issue_buckets),
@@ -315,9 +317,10 @@ def dashboard(
     """
     del visibility  # retained as a cache-key boundary, never serialized
     del fresh  # cache_response handles the bypass before invoking us
-    validate_repository(repository)
-    window = build_window(rng, repository)
-    return _dashboard_build(window, repository)
+    with read_transaction() as connection:
+        validate_repository(connection, repository)
+        window = build_window(rng, repository, connection=connection)
+        return _dashboard_build(connection, window, repository)
 
 
 @router.get("/dashboard")

@@ -1,9 +1,9 @@
 """Shared range, bucket, timestamp, and timing helpers for read endpoints.
 
 The dashboard deliberately keeps the range geometry in one place.  SQL event
-timestamps are UTC and bucket boundaries are epoch-aligned, while the final
-bucket is clipped to the selected right edge so the client never has to infer
-the visible extent from a representative timestamp.
+timestamps are UTC and bucket boundaries are epoch-aligned, while the visible
+first and final buckets are clipped to the selected range edges so the client
+never has to infer the extent from a representative timestamp.
 """
 from __future__ import annotations
 
@@ -14,9 +14,11 @@ import logging
 import os
 import re
 import time
+from typing import Iterator
 
 from fastapi import HTTPException
 
+from backend import db
 
 log = logging.getLogger("ghpulse.api")
 TIMING_ON = os.environ.get("GHPULSE_TIMING", "").lower() not in {
@@ -35,6 +37,34 @@ _BUCKET_CANDIDATES_S = (
     12 * 3600,
     86400,
 )
+
+
+def utc_now() -> datetime:
+    """Return the application clock in UTC (a deterministic test seam)."""
+    return datetime.now(timezone.utc)
+
+
+@contextmanager
+def read_transaction() -> Iterator:
+    """Yield one consistent, read-only PostgreSQL snapshot.
+
+    Dashboard assembly spans several queries.  A repeatable-read transaction
+    keeps the range edge, current rows, repository metadata, and sync marker
+    from crossing an ingest commit.  Explicit rollback on every exception is
+    important because pooled connections must never return with a failed
+    transaction attached.
+    """
+    with db.viz_conn() as connection:
+        try:
+            connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            yield connection
+        except BaseException:
+            connection.rollback()
+            raise
+        else:
+            connection.commit()
 
 
 class Phases:

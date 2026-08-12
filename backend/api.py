@@ -1,13 +1,11 @@
 """Public FastAPI read routes for ghpulse."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from fastapi import APIRouter, Query
 from starlette.requests import Request
 
 from backend import db
-from backend.api_common import _iso
+from backend.api_common import _iso, read_transaction, utc_now
 from backend.api_dashboard import (
     _event_repository_ids,
     build_window,
@@ -30,12 +28,12 @@ def me(request: Request) -> dict:
 
 
 def _repository_options(rng: str) -> dict:
-    window = build_window(rng)
-    ids = _event_repository_ids(window, None)
-    generated_at = _iso(datetime.now(timezone.utc))
-    if not ids:
-        return {"range": rng, "repositories": [], "generated_at": generated_at}
-    with db.viz_conn() as connection:
+    generated_at = _iso(utc_now())
+    with read_transaction() as connection:
+        window = build_window(rng, connection=connection)
+        ids = _event_repository_ids(connection, window, None)
+        if not ids:
+            return {"range": rng, "repositories": [], "generated_at": generated_at}
         rows = connection.execute(
             """
             SELECT node_id, name_with_owner, url
@@ -46,14 +44,14 @@ def _repository_options(rng: str) -> dict:
             """,
             (ids,),
         ).fetchall()
-    return {
-        "range": rng,
-        "repositories": [
-            {"node_id": node_id, "name_with_owner": name, "url": url}
-            for node_id, name, url in rows
-        ],
-        "generated_at": generated_at,
-    }
+        return {
+            "range": rng,
+            "repositories": [
+                {"node_id": node_id, "name_with_owner": name, "url": url}
+                for node_id, name, url in rows
+            ],
+            "generated_at": generated_at,
+        }
 
 
 @cache_response
