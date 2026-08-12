@@ -4,7 +4,7 @@
 // shell. React and Babel are supplied by public/index.html; the backend owns
 // authentication, caching, ingest, and the aggregate response contract.
 
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 // --- pure app contracts ---
 
@@ -56,14 +56,17 @@ function readFilterState(search) {
   };
 }
 
-function buildDashboardQuery(range, repository) {
+function buildDashboardQuery(range, repository, {fresh = false} = {}) {
   const params = new URLSearchParams({range: range || '30d'});
   if (repository) params.set('repository', repository);
+  if (fresh) params.set('fresh', '1');
   return `/api/dashboard?${params.toString()}`;
 }
 
-function buildRepositoriesQuery(range) {
-  return `/api/repositories?range=${encodeURIComponent(range || '30d')}`;
+function buildRepositoriesQuery(range, {fresh = false} = {}) {
+  const params = new URLSearchParams({range: range || '30d'});
+  if (fresh) params.set('fresh', '1');
+  return `/api/repositories?${params.toString()}`;
 }
 
 function normalizeBuckets(rows) {
@@ -111,6 +114,15 @@ function formatLastIngest(value, now = Date.now()) {
     stale,
     ageMs,
   };
+}
+
+function formatSyncStatus(summary, ingest) {
+  if (summary && summary.sync_status === 'failure') {
+    return {label: ingest.stale ? 'failed · stale' : 'failed', stale: true};
+  }
+  if (ingest.stale) return {label: 'stale', stale: true};
+  if (summary && summary.sync_status === 'success') return {label: 'success', stale: false};
+  return {label: 'unknown', stale: true};
 }
 
 function normalizeDashboardSelection(selection) {
@@ -161,6 +173,7 @@ function createDashboardRequestCoordinator({
   onStateChange,
   onStreamStateChange,
   onIngest: onIngestCallback,
+  onIngestFailure: onIngestFailureCallback,
   eventSourceFactory,
 }) {
   let disposed = false;
@@ -178,7 +191,7 @@ function createDashboardRequestCoordinator({
     controller = null;
   }
 
-  function load(selection, {retain = false} = {}) {
+  function load(selection, {retain = false, fresh = false} = {}) {
     if (disposed) return Promise.resolve(null);
     const normalized = normalizeDashboardSelection(selection);
     const retained = retain && activeData
@@ -204,7 +217,7 @@ function createDashboardRequestCoordinator({
       // deterministic: the request is registered before the caller can
       // receive or resolve a mocked fetch promise, while normal `fetch`
       // still returns its promise immediately.
-      request = fetchJson(normalized, requestController.signal);
+      request = fetchJson(normalized, requestController.signal, fresh);
     } catch (error) {
       request = Promise.reject(error);
     }
@@ -252,12 +265,18 @@ function createDashboardRequestCoordinator({
     const onIngest = () => {
       streamNotify('connected');
       if (typeof onIngestCallback === 'function') onIngestCallback(activeSelection);
-      if (activeSelection) load(activeSelection, {retain: true});
+      if (activeSelection) load(activeSelection, {retain: true, fresh: true});
     };
-    eventSource.__ghpulseHandlers = {onOpen, onError, onIngest};
+    const onIngestFailure = () => {
+      streamNotify('connected');
+      if (typeof onIngestFailureCallback === 'function') onIngestFailureCallback(activeSelection);
+      if (activeSelection) load(activeSelection, {retain: true, fresh: true});
+    };
+    eventSource.__ghpulseHandlers = {onOpen, onError, onIngest, onIngestFailure};
     eventSource.addEventListener('open', onOpen);
     eventSource.addEventListener('error', onError);
     eventSource.addEventListener('ingest_done', onIngest);
+    eventSource.addEventListener('ingest_failed', onIngestFailure);
     return eventSource;
   }
 
@@ -272,6 +291,7 @@ function createDashboardRequestCoordinator({
       if (handlers.onOpen) eventSource.removeEventListener('open', handlers.onOpen);
       if (handlers.onError) eventSource.removeEventListener('error', handlers.onError);
       if (handlers.onIngest) eventSource.removeEventListener('ingest_done', handlers.onIngest);
+      if (handlers.onIngestFailure) eventSource.removeEventListener('ingest_failed', handlers.onIngestFailure);
     }
     if (typeof eventSource.close === 'function') eventSource.close();
     eventSource = null;
@@ -303,6 +323,7 @@ window.ghpulseAppContract = {
   createDashboardRequestCoordinator,
   dashboardToViewModel,
   formatLastIngest,
+  formatSyncStatus,
   mergeRepositoryHistory,
   normalizeDashboardSelection,
   repositoryOptionsForSelection,
@@ -330,7 +351,9 @@ function App() {
     error: '',
   });
   const [streamState, setStreamState] = useState('connecting');
-  const [repositoryRefreshNonce, setRepositoryRefreshNonce] = useState(0);
+  const [repositoryFresh, setRepositoryFresh] = useState(false);
+  const repositoryRequestId = useRef(0);
+  const skipRepositoryRefresh = useRef(false);
 
   const backendFetch = useCallback(async (path, options = {}) => {
     const response = await fetch(apiPath(path), {
@@ -367,23 +390,42 @@ function App() {
 
   useEffect(() => {
     let alive = true;
+    const currentRequestId = ++repositoryRequestId.current;
+    const requestController = typeof AbortController === 'function'
+      ? new AbortController() : {signal: undefined, abort() {}};
     setRepositoryError('');
-    backendFetch(buildRepositoriesQuery(activeRange))
+    const requestedFresh = repositoryFresh;
+    if (!requestedFresh && skipRepositoryRefresh.current) {
+      skipRepositoryRefresh.current = false;
+      return () => { alive = false; };
+    }
+    backendFetch(buildRepositoriesQuery(activeRange, {fresh: requestedFresh}), {
+      signal: requestController.signal,
+    })
       .then(body => {
-        if (!alive) return;
+        if (!alive || currentRequestId !== repositoryRequestId.current) return;
         const nextRepositories = Array.isArray(body.repositories) ? body.repositories : [];
         setRepositories(nextRepositories);
         setRepositoryHistory(previous => mergeRepositoryHistory(previous, nextRepositories));
+        if (requestedFresh) {
+          skipRepositoryRefresh.current = true;
+          setRepositoryFresh(false);
+        }
       })
       .catch(err => {
-        if (alive) setRepositoryError(`repository list unavailable: ${err.message}`);
+        if (!alive || currentRequestId !== repositoryRequestId.current
+            || (err && err.name === 'AbortError')) return;
+        setRepositoryError(`repository list unavailable: ${err.message}`);
       });
-    return () => { alive = false; };
-  }, [activeRange, repositoryRefreshNonce, backendFetch]);
+    return () => {
+      alive = false;
+      requestController.abort();
+    };
+  }, [activeRange, repositoryFresh, backendFetch]);
 
   const requestCoordinator = useMemo(() => createDashboardRequestCoordinator({
-    fetchJson: (selection, signal) => backendFetch(
-      buildDashboardQuery(selection.range, selection.repository), {signal}),
+    fetchJson: (selection, signal, fresh) => backendFetch(
+      buildDashboardQuery(selection.range, selection.repository, {fresh}), {signal}),
     onStateChange: state => {
       setDashboardState(state);
       const body = state.data && state.data.body;
@@ -392,7 +434,8 @@ function App() {
       }
     },
     onStreamStateChange: setStreamState,
-    onIngest: () => setRepositoryRefreshNonce(value => value + 1),
+    onIngest: () => setRepositoryFresh(true),
+    onIngestFailure: () => {},
     eventSourceFactory: () => new EventSource(apiPath('/api/events'), {withCredentials: true}),
   }), [backendFetch]);
 
@@ -535,6 +578,7 @@ function DashboardView({view}) {
   const issues = summary.issues || {};
   const pullRequests = summary.pull_requests || {};
   const ingest = formatLastIngest(summary.last_ingest);
+  const sync = formatSyncStatus(summary, ingest);
   const hasIssueEvents = view.issues.events.some(bucket =>
     ISSUE_SERIES.some(series => Number(bucket[series.key]) > 0));
   const hasPullRequestEvents = view.pullRequests.events.some(bucket =>
@@ -546,6 +590,7 @@ function DashboardView({view}) {
         issues={issues}
         pullRequests={pullRequests}
         ingest={ingest}
+        sync={sync}
       />
       <div className="dash-grid ghpulse-panel-grid">
         <PanelShell title="External Issues" empty={!hasIssueEvents} emptyText="No external issue activity in this range.">
@@ -580,7 +625,7 @@ function PanelShell({title, empty, emptyText, children}) {
   );
 }
 
-function SummaryStrip({summary, issues, pullRequests, ingest}) {
+function SummaryStrip({summary, issues, pullRequests, ingest, sync}) {
   const values = [
     {label: 'external repositories', value: summary.repositories || 0},
     {label: 'issues opened', value: issues.opened || 0, color: SERIES_COLORS.opened},
@@ -592,7 +637,7 @@ function SummaryStrip({summary, issues, pullRequests, ingest}) {
     {label: 'pull requests closed unmerged', value: pullRequests.closed_unmerged || 0, color: SERIES_COLORS.closed_unmerged},
     {label: 'pull requests currently open', value: pullRequests.currently_open || 0},
     {label: 'last ingest', value: ingest.label, warn: ingest.stale},
-    {label: 'ingest status', value: ingest.stale ? 'stale' : 'fresh', warn: ingest.stale},
+    {label: 'ingest status', value: sync.label, warn: sync.stale},
   ];
   return (
     <div className="dash-summary ghpulse-summary">

@@ -112,6 +112,22 @@ def _assert_changed_totals(body: dict) -> None:
     ) == {"opened": 1, "merged": 1, "closed_unmerged": 0}
 
 
+def _assert_changed_dashboard_dom(page) -> None:
+    expected = {
+        "issues opened": "1",
+        "issues completed": "0",
+        "issues not planned": "1",
+        "pull requests opened": "1",
+        "pull requests merged": "1",
+        "pull requests closed unmerged": "0",
+    }
+    for label, value in expected.items():
+        stat = page.locator(".stat").filter(has_text=label)
+        assert stat.locator(".stat-value").inner_text() == value
+    assert page.locator('svg[data-panel="External Issues"]').count() == 1
+    assert page.locator('svg[data-panel="External Pull Requests"]').count() == 1
+
+
 def _attach_browser_assertions(page):
     errors: dict[str, list[str]] = {
         "console": [],
@@ -165,6 +181,16 @@ def _wait_dashboard(page) -> None:
 
 
 def _dashboard(page, query: str) -> dict:
+    return page.evaluate(
+        "query => fetch('/api/dashboard?range=' + query)"
+        ".then(response => { if (!response.ok) throw new Error(response.status); "
+        "return response.json(); })",
+        query,
+    )
+
+
+def _dashboard_fresh(page, query: str) -> dict:
+    """Explicitly bypass cache for independent range/filter probes."""
     return page.evaluate(
         "query => fetch('/api/dashboard?range=' + query + '&fresh=1')"
         ".then(response => { if (!response.ok) throw new Error(response.status); "
@@ -298,7 +324,7 @@ def test_final_production_integration(monkeypatch):
                 "R_2",
             ]
             assert (
-                _dashboard(guest, "all&repository=R_1")["summary"]["repositories"]
+                _dashboard_fresh(guest, "all&repository=R_1")["summary"]["repositories"]
                 == 1
             )
             assert "fixture-token" not in guest.content()
@@ -315,8 +341,17 @@ def test_final_production_integration(monkeypatch):
                 assert response.status_code == 200, response.text
                 assert response.json()["data_changed"] is True
 
-            changed = _dashboard(guest, "all")
-            _assert_changed_totals(changed)
+            guest.locator('.stat').filter(has_text='issues completed').get_by_text('0', exact=True).wait_for()
+            guest.locator('.stat').filter(has_text='issues not planned').get_by_text('1', exact=True).wait_for()
+            guest.locator('.stat').filter(has_text='pull requests merged').get_by_text('1', exact=True).wait_for()
+            assert guest.locator('select option').count() == 2
+            assert guest.locator('select option').nth(1).inner_text() == 'external/one'
+            # This normal endpoint read is intentionally not used as proof:
+            # the cache contract may serve its stale body while refresh work
+            # is draining.  The mounted app's fresh event path is the release
+            # boundary under test, and these DOM assertions prove both panels
+            # and the repository selector consumed the changed snapshot.
+            _assert_changed_dashboard_dom(guest)
             assert _assert_chart_range_boundaries(guest) == {
                 "24h": True,
                 "7d": True,
@@ -345,7 +380,7 @@ def test_final_production_integration(monkeypatch):
             auth_body = _dashboard(authenticated, "all")
             _assert_changed_totals(auth_body)
             assert (
-                _dashboard(authenticated, "30d&repository=R_1")["summary"]["repositories"]
+                _dashboard_fresh(authenticated, "30d&repository=R_1")["summary"]["repositories"]
                 == 1
             )
             assert [

@@ -393,8 +393,8 @@ def test_sse_refetches_current_selection_reconnects_and_cleans_up():
         const streamStates = [];
         let source;
         const coordinator = window.ghpulseAppContract.createDashboardRequestCoordinator({
-          fetchJson: (selection, signal) => new Promise((resolve, reject) =>
-            requests.push({selection, signal, resolve, reject})),
+          fetchJson: (selection, signal, fresh) => new Promise((resolve, reject) =>
+            requests.push({selection, signal, fresh, resolve, reject})),
           onStateChange: () => {},
           onStreamStateChange: state => streamStates.push(state),
           eventSourceFactory: () => (source = new MockSource()),
@@ -415,7 +415,7 @@ def test_sse_refetches_current_selection_reconnects_and_cleans_up():
         source.emit('ingest_done');
         console.log(JSON.stringify({
           refetched, afterDispose: requests.length, closed: source.closed,
-          streamStates,
+          streamStates, fresh: requests[1].fresh,
         }));
         """,
     )
@@ -423,6 +423,7 @@ def test_sse_refetches_current_selection_reconnects_and_cleans_up():
     assert result["afterDispose"] == 2
     assert result["closed"] is True
     assert result["streamStates"] == ["connected", "reconnecting", "connected"]
+    assert result["fresh"] is True
 
 
 def test_same_selection_sse_failure_keeps_prior_data_and_marks_it_stale():

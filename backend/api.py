@@ -57,9 +57,11 @@ def _repository_options(rng: str) -> dict:
 def repositories(
     rng: str = Query("30d", alias="range"),
     visibility: str = "guest",
+    fresh: int = Query(0),
 ) -> dict:
     """List public external repositories represented in the selected range."""
     del visibility
+    del fresh
     return _repository_options(rng)
 
 
@@ -67,7 +69,8 @@ def repositories(
 def repositories_route(
     request: Request,
     rng: str = Query("30d", alias="range"),
+    fresh: int = Query(0),
 ) -> dict:
     """Serve public external repositories for the selected range."""
     visibility = "guest" if bool(getattr(request.state, "is_guest", False)) else "authenticated"
-    return repositories(rng=rng, visibility=visibility)
+    return repositories(rng=rng, visibility=visibility, fresh=fresh)
