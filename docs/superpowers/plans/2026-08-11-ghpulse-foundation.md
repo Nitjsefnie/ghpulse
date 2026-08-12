@@ -30,7 +30,7 @@
 - `backend/api.py`: `/api/me`, `/api/repositories`, `/api/events`.
 - `backend/api_dashboard.py`: aggregate SQL and response contract for two panels.
 - `backend/github_source.py`: narrow adapter around `vendor/gh-widgets/ghwidgets_data.py`.
-- `backend/ingest.py`: locked complete-snapshot sync, state upsert, reconciliation, snapshot export.
+- `backend/ingest.py`: locked complete-snapshot sync, transactional state upsert/reconciliation, cache invalidation, and SSE notification.
 - `backend/schema.sql`: repositories, issues, pull_requests, ingest_runs, sync_state.
 - Claudit-derived `backend/auth.py`, `login.py`, `session.py`, `db.py`, `events.py`, `cache.py`.
 - `public/index.html`, `public/app.css`: proven shell and visual tokens.
@@ -180,7 +180,6 @@ git commit -m "feat: add GitHub source and current-state schema"
 - Consumes: normalized snapshot dictionaries and visualization DB pool.
 - Produces: `run_ingest(trigger: str) -> dict`.
 - Produces: `progress_snapshot() -> dict`.
-- Produces: atomic exported snapshot at `GH_SNAPSHOT_FILE`.
 
 - [ ] **Step 1: Write failing cold-sync and state-switch tests**
 
@@ -210,14 +209,14 @@ Upsert repositories first, then issues and PRs. Every mutable field is replaced 
 
 Every run consumes one complete validated snapshot. Collect seen IDs and delete unseen rows only in the same transaction after the entire source fetch and every upsert succeed. Record the committed/source snapshot timestamps only on success.
 
-- [ ] **Step 5: Implement locking, export, cache/SSE hooks**
+- [ ] **Step 5: Implement locking and post-commit cache/SSE hooks**
 
-Use Claudit's non-blocking ingest lock semantics. After a data-changing commit, export the normalized current DB snapshot atomically, invalidate response caches, and broadcast `ingest_done`. A concurrent invocation returns a truthful skipped summary.
+Use Claudit's non-blocking ingest lock semantics. PostgreSQL is authoritative; do not create a second post-commit snapshot artifact. After a data-changing commit, invalidate response caches and broadcast `ingest_done`. A concurrent invocation returns a truthful skipped summary.
 
 - [ ] **Step 6: Run ingest tests**
 
 Run: `python3 -m pytest tests/test_ingest.py -q`  
-Expected: cold sync, idempotency, state change, complete reconciliation, failed rollback, external-owner changes, and snapshot export all pass.
+Expected: cold sync, idempotency, state change, complete reconciliation, failed rollback, external-owner changes, cache invalidation, and SSE notification all pass.
 
 - [ ] **Step 7: Commit**
 

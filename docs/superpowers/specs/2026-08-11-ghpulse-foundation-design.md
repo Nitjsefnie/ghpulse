@@ -66,7 +66,7 @@ The backend follows Claudit's split rather than growing a single route module:
 - `backend/api_dashboard.py`: the two timeline queries and response assembly.
 - `backend/auth.py`, `login.py`, `session.py`, `db.py`, `events.py`, and `cache.py`: adapted from Claudit with the same separation of the visualization and external authentication databases.
 - `backend/github_source.py`: the only adapter to the pinned `gh-widgets` acquisition API.
-- `backend/ingest.py`: sync planning, upserts, full-resync reconciliation, snapshot export, cache invalidation, and SSE notification.
+- `backend/ingest.py`: locked complete-snapshot acquisition, transactional upserts/reconciliation, cache invalidation, and SSE notification.
 - `backend/schema.sql`: current repository/item state and ingest metadata.
 
 ### ghpulse frontend
@@ -79,7 +79,7 @@ The existing bounded time-series geometry is generalized only as far as required
 
 The dashboard is for one configured account (`GH_USER`) and one GitHub token. A repository is external when its owner is neither the account login nor any organisation returned for that token, plus additive `GH_EXTRA_INSIDERS`. This is the same rule as `gh-widgets`.
 
-Identity and public organisations are refreshed on every successful sync and used transiently to exclude owned repositories before snapshot serialization. Only public external repositories and their authored items enter the dashboard or exported snapshot; membership relationships are never serialized into the interchange file.
+Identity and public organisations are refreshed on every successful sync and used transiently to exclude owned repositories before snapshot construction. Only public external repositories and their authored items enter the acquisition snapshot and dashboard; membership relationships are never serialized into the interchange structure.
 
 ## Current-state data model
 
@@ -174,7 +174,7 @@ If measured query cost later justifies rollups, they can be added behind the sam
 
 ## Snapshot contract for gh-widgets
 
-The exported JSON is a presentation input, not a copy of PostgreSQL and not a renderer cache. It contains:
+The validated acquisition snapshot is an ingest input, not a copy of PostgreSQL and not a renderer cache. It contains:
 
 - `schema_version`;
 - `generated_at` and source account identity;
@@ -182,7 +182,7 @@ The exported JSON is a presentation input, not a copy of PostgreSQL and not a re
 - normalized current issues;
 - normalized current pull requests.
 
-It is written atomically and validated through the shared `gh-widgets` module using exact nested schemas. Unknown fields, private flags, invalid timestamps, broken repository references, and credential-bearing extras are rejected. Missing future sections are explicit and do not silently fall back to stale data. The contract is consumed by ghpulse's ingest adapter, not by the SVG renderer CLIs; every standalone renderer continues using its existing fetch/cache path and private renderer-specific data.
+It is constructed and validated through the shared `gh-widgets` module using exact nested schemas; file-based fixture/manual inputs use its atomic reader/writer. Unknown fields, private flags, invalid timestamps, broken repository references, and credential-bearing extras are rejected. Missing future sections are explicit and do not silently fall back to stale data. The contract is consumed by ghpulse's ingest adapter, not by the SVG renderer CLIs; every standalone renderer continues using its existing fetch/cache path and private renderer-specific data. ghpulse does not write a second post-commit snapshot artifact because PostgreSQL is its authoritative state.
 
 ## Authentication and guest behavior
 
@@ -194,7 +194,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 
 - GraphQL errors and incomplete pagination fail the sync rather than committing a partial reconciliation.
 - A failed acquisition or transaction preserves all current rows, sync state, and the last good dashboard response; unseen rows are reconciled only inside a fully successful complete-snapshot transaction.
-- A corrupt or incompatible exported snapshot is rejected by the public `gh-widgets` data API; standalone renderers remain independent of that interchange file.
+- A corrupt or incompatible supplied snapshot file is rejected by the public `gh-widgets` data API; standalone renderers remain independent of that interchange file.
 - Unknown issue state reasons remain stored but do not enter either final-outcome series until explicitly mapped.
 - Missing outcome timestamps exclude that outcome event and surface an ingest warning; timestamps are never guessed.
 - Health reports the last successful ingest, current progress, and most recent error.
@@ -235,7 +235,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 
 ## Deployment
 
-Ship a systemd service behind nginx, following Claudit's deployment pattern. Startup triggers a complete ingest and APScheduler repeats it hourly; no second weekly mode exists. PostgreSQL schema application is idempotent. Environment includes visualization/auth DSNs, cookie/admin secrets, GitHub user/token settings, snapshot output path, and parser/source version.
+Ship a systemd service behind nginx, following Claudit's deployment pattern. Startup triggers a complete ingest and APScheduler repeats it hourly; no second weekly mode exists. PostgreSQL schema application is idempotent. Environment includes visualization/auth DSNs, cookie/admin secrets, GitHub user/token settings, and parser/source version.
 
 The submodule commit is part of every deploy. Deployment fails if it is missing or its public API/schema version does not match `ghpulse`.
 
