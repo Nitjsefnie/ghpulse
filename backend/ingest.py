@@ -624,9 +624,13 @@ def run_ingest(trigger: str) -> dict:
             started_at=started_at.isoformat(),
             last_error=None,
         )
-        run_id = _open_run(started_at, trigger)
-        _set_progress(run_id=run_id)
+        run_id: int | None = None
         try:
+            # Opening the audit row is itself fallible (for example during a
+            # migration or a database outage). Keep it inside the guarded
+            # flow so a failed open cannot strand /health in ``acquiring``.
+            run_id = _open_run(started_at, trigger)
+            _set_progress(run_id=run_id)
             token, login = _configured_credentials()
             try:
                 snapshot = fetch_snapshot(token, login)
@@ -644,6 +648,7 @@ def run_ingest(trigger: str) -> dict:
                 total=len(repositories) + len(issues) + len(pull_requests),
                 done=0,
             )
+            assert run_id is not None
             summary = _commit_snapshot(
                 run_id,
                 started_at,
@@ -657,7 +662,10 @@ def run_ingest(trigger: str) -> dict:
             return summary
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
-            _finish_failed_run(run_id, datetime.now(timezone.utc), error)
+            if run_id is not None:
+                _finish_failed_run(run_id, datetime.now(timezone.utc), error)
+            else:
+                log.exception("could not open ingest run: %s", error)
             _reset_progress(error)
             raise
         finally:

@@ -56,7 +56,6 @@ def test_schema_indexes_all_dashboard_timestamp_dimensions(schema_text):
 
 def test_schema_has_ingest_audit_and_singleton_sync_state(schema_text):
     assert "CREATE TABLE IF NOT EXISTS ingest_runs" in schema_text
-    assert "full_sync" in schema_text
     assert "fetched" in schema_text
     assert "upserted" in schema_text
     assert "deleted" in schema_text
@@ -64,7 +63,9 @@ def test_schema_has_ingest_audit_and_singleton_sync_state(schema_text):
     assert "finished_at" in schema_text
     assert "error" in schema_text
     assert "CREATE TABLE IF NOT EXISTS sync_state" in schema_text
-    assert "last_successful_high_water" in schema_text
+    assert "last_committed_at" in schema_text
+    assert "last_source_snapshot_at" in schema_text
+    assert "data_changed" in schema_text
     assert "CHECK (id = 1)" in schema_text
 
 
@@ -114,3 +115,129 @@ def test_schema_applies_twice_when_test_database_is_configured(schema_text):
             assert cursor.fetchone()[0] == 0
             cursor.execute("SELECT count(*) FROM sync_state")
             assert cursor.fetchone()[0] == 1
+
+
+_TASK2_OLD_SCHEMA = """
+CREATE TABLE repositories (
+  node_id TEXT PRIMARY KEY,
+  name_with_owner TEXT NOT NULL,
+  owner_login TEXT NOT NULL,
+  url TEXT NOT NULL,
+  is_private BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_private IS FALSE),
+  is_external BOOLEAN NOT NULL DEFAULT TRUE CHECK (is_external IS TRUE),
+  first_seen_at TIMESTAMPTZ NOT NULL,
+  last_seen_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE issues (
+  node_id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(node_id) ON DELETE CASCADE,
+  number INTEGER NOT NULL CHECK (number > 0),
+  url TEXT NOT NULL,
+  is_private BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_private IS FALSE),
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  closed_at TIMESTAMPTZ,
+  state TEXT NOT NULL CHECK (state IN ('OPEN', 'CLOSED')),
+  state_reason TEXT CHECK (state_reason IS NULL OR state_reason IN
+                           ('COMPLETED', 'NOT_PLANNED', 'REOPENED')),
+  CHECK ((state = 'OPEN' AND closed_at IS NULL
+          AND (state_reason IS NULL OR state_reason = 'REOPENED'))
+         OR (state = 'CLOSED' AND closed_at IS NOT NULL
+             AND state_reason IN ('COMPLETED', 'NOT_PLANNED')))
+);
+CREATE TABLE pull_requests (
+  node_id TEXT PRIMARY KEY,
+  repository_id TEXT NOT NULL REFERENCES repositories(node_id) ON DELETE CASCADE,
+  number INTEGER NOT NULL CHECK (number > 0),
+  url TEXT NOT NULL,
+  is_private BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_private IS FALSE),
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  closed_at TIMESTAMPTZ,
+  merged_at TIMESTAMPTZ,
+  state TEXT NOT NULL CHECK (state IN ('OPEN', 'CLOSED', 'MERGED')),
+  merged BOOLEAN NOT NULL DEFAULT FALSE,
+  CHECK (state = 'OPEN' AND merged IS FALSE AND closed_at IS NULL AND merged_at IS NULL
+         OR state = 'CLOSED' AND merged IS FALSE AND closed_at IS NOT NULL
+         OR state = 'MERGED' AND merged IS TRUE AND closed_at IS NOT NULL
+                         AND merged_at IS NOT NULL)
+);
+CREATE TABLE ingest_runs (
+  id BIGSERIAL PRIMARY KEY,
+  trigger TEXT NOT NULL,
+  full_sync BOOLEAN NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ,
+  repositories_fetched INTEGER NOT NULL DEFAULT 0,
+  issues_fetched INTEGER NOT NULL DEFAULT 0,
+  pull_requests_fetched INTEGER NOT NULL DEFAULT 0,
+  repositories_upserted INTEGER NOT NULL DEFAULT 0,
+  issues_upserted INTEGER NOT NULL DEFAULT 0,
+  pull_requests_upserted INTEGER NOT NULL DEFAULT 0,
+  repositories_deleted INTEGER NOT NULL DEFAULT 0,
+  issues_deleted INTEGER NOT NULL DEFAULT 0,
+  pull_requests_deleted INTEGER NOT NULL DEFAULT 0,
+  error TEXT
+);
+CREATE TABLE sync_state (
+  id SMALLINT PRIMARY KEY CHECK (id = 1),
+  last_successful_high_water TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO sync_state (id) VALUES (1);
+"""
+
+
+def test_schema_upgrades_task2_audit_shape_and_removes_obsolete_columns(schema_text):
+    """A disposable PostgreSQL database must upgrade, then reapply cleanly."""
+    dsn = os.environ.get("GHPULSE_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("GHPULSE_TEST_DATABASE_URL is not configured")
+
+    psycopg = pytest.importorskip("psycopg")
+    with psycopg.connect(dsn, autocommit=True) as connection:
+        connection.execute(
+            "DROP TABLE IF EXISTS issues, pull_requests, repositories, "
+            "ingest_runs, sync_state CASCADE"
+        )
+        connection.execute(_TASK2_OLD_SCHEMA)
+        connection.execute(schema_text)
+        connection.execute(schema_text)
+
+        columns = {
+            table: {
+                row[0]
+                for row in connection.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = %s",
+                    (table,),
+                ).fetchall()
+            }
+            for table in ("ingest_runs", "sync_state", "repositories", "issues", "pull_requests")
+        }
+        assert {"committed_at", "source_snapshot_at", "data_changed"} <= columns[
+            "ingest_runs"
+        ]
+        assert {"last_committed_at", "last_source_snapshot_at"} <= columns[
+            "sync_state"
+        ]
+        assert "full_sync" not in columns["ingest_runs"]
+        assert "last_successful_high_water" not in columns["sync_state"]
+        assert {"node_id", "is_external", "first_seen_at", "last_seen_at"} <= columns[
+            "repositories"
+        ]
+        assert {"state", "state_reason", "closed_at"} <= columns["issues"]
+        assert {"state", "merged", "merged_at"} <= columns["pull_requests"]
+
+        constraints = connection.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid = 'issues'::regclass AND contype = 'c'"
+        ).fetchall()
+        assert any("state_reason" in row[0] for row in constraints)
+        foreign_keys = connection.execute(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+            "WHERE conrelid IN ('issues'::regclass, 'pull_requests'::regclass) "
+            "AND contype = 'f'"
+        ).fetchall()
+        assert len(foreign_keys) == 2
+        assert all("ON DELETE CASCADE" in row[0] for row in foreign_keys)

@@ -33,7 +33,7 @@ def ingest_db(monkeypatch):
         encoding="utf-8"
     )
     with psycopg.connect(dsn, autocommit=True) as connection:
-        connection.execute(schema)
+        connection.execute(db.sql_text(schema))
         connection.execute(
             "TRUNCATE issues, pull_requests, repositories, ingest_runs CASCADE"
         )
@@ -59,7 +59,7 @@ def _rows(dsn: str, sql: str):
     import psycopg
 
     with psycopg.connect(dsn) as connection:
-        return connection.execute(sql).fetchall()
+        return connection.execute(db.sql_text(sql)).fetchall()
 
 
 def _install_source(monkeypatch, ingest, snapshot):
@@ -143,6 +143,120 @@ def test_complete_reconciliation_removes_unseen_rows(ingest_db, ingest_module, m
     assert _rows(ingest_db, "SELECT count(*) FROM pull_requests")[0][0] == 1
 
 
+def test_external_owner_mutation_replaces_repository_and_item_context(
+    ingest_db, ingest_module, monkeypatch
+):
+    initial = _snapshot("snapshot_initial.json")
+    changed = copy.deepcopy(initial)
+    changed["generated_at"] = "2026-08-11T13:00:00Z"
+    changed["repositories"][0]["owner"]["login"] = "new-external"
+    changed["repositories"][0]["nameWithOwner"] = "new-external/one"
+    for collection in ("issues", "pull_requests"):
+        for item in changed[collection]:
+            if item["repository_id"] == "R_1":
+                item["owner"] = "new-external"
+                item["repository"] = "new-external/one"
+
+    _install_source(monkeypatch, ingest_module, initial)
+    ingest_module.run_ingest("initial")
+    _install_source(monkeypatch, ingest_module, changed)
+
+    result = ingest_module.run_ingest("owner-change")
+
+    assert result["data_changed"] is True
+    assert _rows(
+        ingest_db,
+        "SELECT owner_login, name_with_owner FROM repositories WHERE node_id = 'R_1'",
+    )[0] == ("new-external", "new-external/one")
+    assert _rows(
+        ingest_db,
+        "SELECT repository_id FROM issues WHERE node_id = 'I_1'",
+    )[0][0] == "R_1"
+
+
+@pytest.mark.parametrize("mutation", ["private", "account_owned"])
+def test_invalid_visibility_or_owner_preserves_state_and_skips_hooks(
+    ingest_db, ingest_module, monkeypatch, mutation
+):
+    from backend.ingest import SourceError
+
+    initial = _snapshot("snapshot_initial.json")
+    _install_source(monkeypatch, ingest_module, initial)
+    ingest_module.run_ingest("initial")
+    before_rows = _rows(
+        ingest_db,
+        "SELECT node_id, owner_login, name_with_owner FROM repositories ORDER BY node_id",
+    )
+    before_sync = _rows(
+        ingest_db,
+        "SELECT last_committed_at, last_source_snapshot_at FROM sync_state WHERE id = 1",
+    )[0]
+
+    invalid = copy.deepcopy(initial)
+    invalid["generated_at"] = "2026-08-11T13:00:00Z"
+    if mutation == "private":
+        invalid["repositories"][0]["isPrivate"] = True
+    else:
+        invalid["repositories"][0]["owner"]["login"] = "octocat"
+        invalid["repositories"][0]["nameWithOwner"] = "octocat/one"
+    _install_source(monkeypatch, ingest_module, invalid)
+    hooks = []
+    monkeypatch.setattr(
+        ingest_module.cache.response_cache,
+        "invalidate",
+        lambda: hooks.append("cache"),
+    )
+    monkeypatch.setattr(
+        ingest_module.events,
+        "broadcast_threadsafe",
+        lambda *args: hooks.append(("event", args)),
+    )
+
+    with pytest.raises(SourceError):
+        ingest_module.run_ingest(f"invalid-{mutation}")
+
+    assert _rows(
+        ingest_db,
+        "SELECT node_id, owner_login, name_with_owner FROM repositories ORDER BY node_id",
+    ) == before_rows
+    assert _rows(
+        ingest_db,
+        "SELECT last_committed_at, last_source_snapshot_at FROM sync_state WHERE id = 1",
+    )[0] == before_sync
+    assert hooks == []
+    error = _rows(
+        ingest_db,
+        f"SELECT error FROM ingest_runs WHERE trigger = 'invalid-{mutation}' ORDER BY id DESC LIMIT 1",
+    )[0][0]
+    assert error
+
+
+def test_open_run_failure_resets_progress_and_does_not_finalize_missing_row(
+    ingest_module, monkeypatch
+):
+    def fail_open(*args, **kwargs):
+        raise RuntimeError("database unavailable while opening run")
+
+    monkeypatch.setattr(ingest_module, "_open_run", fail_open)
+    finalized = []
+    monkeypatch.setattr(
+        ingest_module,
+        "_finish_failed_run",
+        lambda *args: finalized.append(args),
+    )
+
+    with pytest.raises(RuntimeError, match="database unavailable"):
+        ingest_module.run_ingest("open-failure")
+
+    progress = ingest_module.progress_snapshot()
+    assert progress["phase"] == "idle"
+    assert progress["done"] == 0
+    assert progress["total"] == 0
+    assert progress["run_id"] is None
+    assert "database unavailable" in progress["last_error"]
+    assert finalized == []
+
+
 def test_failed_acquisition_preserves_current_rows_and_sync_state(
     ingest_db, ingest_module, monkeypatch
 ):
@@ -188,6 +302,17 @@ def test_mid_transaction_failure_rolls_back_all_current_state(
 
     _install_source(monkeypatch, ingest_module, changed)
     original = ingest_module._upsert_pull_requests
+    hooks = []
+    monkeypatch.setattr(
+        ingest_module.cache.response_cache,
+        "invalidate",
+        lambda: hooks.append("cache"),
+    )
+    monkeypatch.setattr(
+        ingest_module.events,
+        "broadcast_threadsafe",
+        lambda *args: hooks.append(("event", args)),
+    )
 
     def fail_after_issue(*args, **kwargs):
         raise RuntimeError("simulated transaction failure")
@@ -199,6 +324,7 @@ def test_mid_transaction_failure_rolls_back_all_current_state(
 
     assert _rows(ingest_db, "SELECT node_id, state_reason FROM issues ORDER BY node_id") == before
     assert _rows(ingest_db, "SELECT count(*) FROM repositories")[0][0] == 2
+    assert hooks == []
 
 
 def test_lock_contention_returns_truthful_skipped_summary(ingest_module):
@@ -220,17 +346,28 @@ def test_post_commit_hooks_run_after_rows_are_visible(ingest_db, ingest_module, 
     observations = []
 
     def invalidate():
-        observations.append(_rows(ingest_db, "SELECT count(*) FROM issues")[0][0])
+        observations.append(("cache", _rows(ingest_db, "SELECT count(*) FROM issues")[0][0]))
 
-    def broadcast(*args):
-        observations.append(_rows(ingest_db, "SELECT count(*) FROM pull_requests")[0][0])
+    def broadcast(event, payload):
+        observations.append(
+            (
+                "event",
+                event,
+                payload["trigger"],
+                payload["data_changed"],
+                _rows(ingest_db, "SELECT count(*) FROM pull_requests")[0][0],
+            )
+        )
 
     monkeypatch.setattr(ingest_module.cache.response_cache, "invalidate", invalidate)
     monkeypatch.setattr(ingest_module.events, "broadcast_threadsafe", broadcast)
 
     ingest_module.run_ingest("post-commit")
 
-    assert observations == [2, 2]
+    assert observations == [
+        ("cache", 2),
+        ("event", "ingest_done", "post-commit", True, 2),
+    ]
 
 
 def test_progress_snapshot_is_thread_safe_and_resets(ingest_module):

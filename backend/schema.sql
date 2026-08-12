@@ -88,10 +88,9 @@ CREATE TABLE IF NOT EXISTS sync_state (
 );
 
 -- Existing deployments may still have the pre-current-state columns.  The
--- current ingest never reads or writes those obsolete full-sync/high-water
--- fields (legacy names: full_sync and last_successful_high_water); these
--- additive migrations let an already-created database acquire
--- the authoritative commit/source timestamps without a destructive rewrite.
+-- current ingest never reads or writes those obsolete flags; these additive
+-- migrations let an already-created database acquire the authoritative
+-- commit/source timestamps and remove the obsolete metadata columns.
 ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ;
 ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS source_snapshot_at TIMESTAMPTZ;
 ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS data_changed BOOLEAN NOT NULL DEFAULT FALSE;
