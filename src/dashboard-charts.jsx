@@ -125,10 +125,72 @@ function eventAmount(value, fallback = 1) {
   return Number.isFinite(number) ? Math.max(0, number) : 0;
 }
 
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function denseIntervalInput(events) {
+  return Array.isArray(events) && events.some(event => event && (
+    hasOwn(event, 'start') || hasOwn(event, 'end')
+  ));
+}
+
+function validateSeries(series) {
+  const seen = new Set();
+  (Array.isArray(series) ? series : []).forEach((item, index) => {
+    if (!item || typeof item.key !== 'string' || !item.key || seen.has(item.key)) {
+      throw new TypeError(`Invalid chart series at index ${index}`);
+    }
+    seen.add(item.key);
+  });
+}
+
+function validateTimeSeriesInputs(range, binMs) {
+  if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end)
+      || range.end <= range.start || !Number.isFinite(binMs) || binMs <= 0) {
+    throw new TypeError('Invalid time-series range or bin width');
+  }
+}
+
+function normalizedDenseIntervals(events, series, range) {
+  const keys = series.map(item => item.key);
+  const intervals = [];
+  let previousStart = null;
+  let previousEnd = null;
+
+  events.forEach((event, index) => {
+    if (!event || !hasOwn(event, 'start') || !hasOwn(event, 'end')) {
+      throw new TypeError(`Malformed dense interval at index ${index}`);
+    }
+    const start = eventTimestamp({start: event.start});
+    const end = eventTimestamp({start: event.end});
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new TypeError(`Malformed dense interval at index ${index}`);
+    }
+    if (start < range.start || end > range.end) {
+      throw new TypeError(`Dense interval at index ${index} is outside the selected range`);
+    }
+    if (previousStart !== null && start < previousStart) {
+      throw new TypeError('Dense intervals must be ordered by start timestamp');
+    }
+    if (previousEnd !== null && start < previousEnd) {
+      throw new TypeError(`Overlapping dense interval at index ${index}`);
+    }
+
+    const values = Object.fromEntries(keys.map(key => [key, eventAmount(event[key], 0)]));
+    const total = keys.reduce((sum, key) => sum + values[key], 0);
+    intervals.push({start, end, values, total});
+    previousStart = start;
+    previousEnd = end;
+  });
+  return intervals;
+}
+
 // Normalize both useful browser inputs without making the chart depend on
 // the API layer.  A discrete event is {ts, key, value?}; a dense API bucket
-// can instead be {ts, opened, completed, not_planned}.  The returned entries
-// are never the caller's objects and are sorted deterministically.
+// is {start, end, opened, completed, not_planned} and is handled separately
+// below so the API's clipped boundaries survive intact.  Point entries are
+// never the caller's objects and are sorted deterministically.
 function normalizedSeriesEvents(events, series, range) {
   const keys = new Set(series.map(item => item.key));
   const normalized = [];
@@ -161,26 +223,40 @@ function normalizedSeriesEvents(events, series, range) {
 
 function buildStackedTimeSeriesData(events, series, range, binMs) {
   const safeSeries = Array.isArray(series) ? series : [];
-  const bins = boundedTimeIntervals(range, binMs).map(interval => ({
-    ...interval,
-    values: Object.fromEntries(safeSeries.map(item => [item.key, 0])),
-    total: 0,
-  }));
+  validateTimeSeriesInputs(range, binMs);
+  validateSeries(safeSeries);
+  const dense = denseIntervalInput(events);
+  const bins = dense
+    ? normalizedDenseIntervals(events, safeSeries, range)
+    : boundedTimeIntervals(range, binMs).map(interval => ({
+      ...interval,
+      values: Object.fromEntries(safeSeries.map(item => [item.key, 0])),
+      total: 0,
+    }));
   const totals = Object.fromEntries(safeSeries.map(item => [item.key, 0]));
-  const normalized = normalizedSeriesEvents(events, safeSeries, range);
-  let eventIndex = 0;
-  bins.forEach((bin) => {
-    while (eventIndex < normalized.length && normalized[eventIndex].ts < bin.end) {
-      const values = normalized[eventIndex].values;
-      Object.keys(values).forEach(key => {
-        const value = values[key];
-        bin.values[key] += value;
-        bin.total += value;
-        totals[key] += value;
+  if (dense) {
+    bins.forEach(bin => {
+      safeSeries.forEach(item => {
+        totals[item.key] += bin.values[item.key];
       });
-      eventIndex += 1;
-    }
-  });
+    });
+  }
+  const normalized = dense ? [] : normalizedSeriesEvents(events, safeSeries, range);
+  let eventIndex = 0;
+  if (!dense) {
+    bins.forEach((bin) => {
+      while (eventIndex < normalized.length && normalized[eventIndex].ts < bin.end) {
+        const values = normalized[eventIndex].values;
+        Object.keys(values).forEach(key => {
+          const value = values[key];
+          bin.values[key] += value;
+          bin.total += value;
+          totals[key] += value;
+        });
+        eventIndex += 1;
+      }
+    });
+  }
 
   const cumulative = {};
   safeSeries.forEach(item => {
@@ -193,6 +269,129 @@ function buildStackedTimeSeriesData(events, series, range, binMs) {
     cumulative[item.key] = points;
   });
   return {bins, cumulative, totals};
+}
+
+function buildStackedBarSegments(
+  bin, series, range, padL, plotW, maxValue, plotH = 1, padT = 0, barRect = null,
+) {
+  const safeSeries = Array.isArray(series) ? series : [];
+  const rect = barRect || timeBarRect(bin, range, padL, plotW);
+  const safeMax = Math.max(1, Number(maxValue) || 0);
+  const height = Math.max(0, Number(plotH) || 0);
+  let baseline = 0;
+  return safeSeries.map(item => {
+    const value = eventAmount(bin && bin.values ? bin.values[item.key] : 0, 0);
+    const bottom = padT + height - (baseline / safeMax) * height;
+    baseline += value;
+    const top = padT + height - (baseline / safeMax) * height;
+    return {
+      key: item.key,
+      color: item.color,
+      value,
+      x: rect.x,
+      width: rect.width,
+      y: top,
+      height: Math.max(0, bottom - top),
+    };
+  });
+}
+
+function tooltipFmt(value) {
+  const number = Number(value) || 0;
+  const abs = Math.abs(number);
+  if (abs >= 1e9) return (number / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
+  if (abs >= 1e6) return (number / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
+  if (abs >= 1e3) return (number / 1e3).toFixed(1).replace(/\.?0+$/, '') + 'K';
+  return String(Math.round(number));
+}
+
+function buildTooltipLines(bin, cumulative, series, binIdx, totals) {
+  const safeSeries = Array.isArray(series) ? series : [];
+  const safeCumulative = cumulative || {};
+  const safeTotals = totals || {};
+  const index = Number.isInteger(binIdx) ? binIdx : 0;
+  const lines = [];
+  safeSeries.forEach(item => {
+    const period = eventAmount(bin && bin.values ? bin.values[item.key] : 0, 0);
+    const points = Array.isArray(safeCumulative[item.key]) ? safeCumulative[item.key] : [];
+    const point = points[index + 1];
+    lines.push([`${item.label} period`, tooltipFmt(period), item.color]);
+    lines.push([`${item.label} cumulative`, tooltipFmt(point ? point.v : 0), item.color]);
+  });
+  lines.push(['interval events', String(bin && Number.isFinite(bin.total) ? bin.total : 0)]);
+  safeSeries.forEach(item => {
+    const period = eventAmount(bin && bin.values ? bin.values[item.key] : 0, 0);
+    const selectedTotal = eventAmount(safeTotals[item.key], 0);
+    lines.push([`${item.label} % selected-range total`, selectedTotal > 0
+      ? `${((period / selectedTotal) * 100).toFixed(2)}%` : '0%', item.color]);
+  });
+  return lines;
+}
+
+function wrapLegendLabel(label, maxChars) {
+  const words = String(label == null ? '' : label).trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [''];
+  const chunks = [];
+  words.forEach(word => {
+    if (word.length <= maxChars) {
+      chunks.push(word);
+      return;
+    }
+    for (let offset = 0; offset < word.length; offset += maxChars) {
+      chunks.push(word.slice(offset, offset + maxChars));
+    }
+  });
+  const lines = [];
+  chunks.forEach(chunk => {
+    const current = lines[lines.length - 1];
+    if (current && current.length + 1 + chunk.length <= maxChars) {
+      lines[lines.length - 1] = `${current} ${chunk}`;
+    } else {
+      lines.push(chunk);
+    }
+  });
+  return lines;
+}
+
+function layoutLegend(series, width, charPx = 6.4) {
+  const available = Math.max(1, Number(width) || 1);
+  const measuredCharPx = Math.max(1, Number(charPx) || 6.4);
+  const markerAndGap = 24;
+  const gap = 6;
+  const rowHeight = 16;
+  const maxChars = Math.max(1, Math.floor((available - markerAndGap) / measuredCharPx));
+  const items = [];
+  let cursorX = 0;
+  let cursorY = 0;
+  let currentRowHeight = rowHeight;
+  (Array.isArray(series) ? series : []).forEach(item => {
+    const labelLines = wrapLegendLabel(item && item.label, maxChars);
+    const longest = Math.max(...labelLines.map(line => line.length), 1);
+    const itemWidth = Math.min(available, Math.max(30, markerAndGap + longest * measuredCharPx));
+    const itemHeight = Math.max(rowHeight, labelLines.length * rowHeight);
+    if (cursorX > 0 && cursorX + itemWidth > available) {
+      cursorX = 0;
+      cursorY += currentRowHeight;
+      currentRowHeight = rowHeight;
+    }
+    items.push({
+      key: item && item.key,
+      color: item && item.color,
+      labelLines,
+      maxChars,
+      x: cursorX,
+      y: cursorY,
+      width: itemWidth,
+      height: itemHeight,
+    });
+    cursorX += itemWidth + gap;
+    currentRowHeight = Math.max(currentRowHeight, itemHeight);
+  });
+  return {
+    width: available,
+    height: items.length ? cursorY + currentRowHeight : 0,
+    items,
+  };
 }
 
 function timeX(ts, range, padL, plotW) {
@@ -294,7 +493,7 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
   const {w, h} = size;
   const padR = 70;
   const padT = 28;
-  const padB = 48;
+  const basePadB = 48;
   const measuredPadL = Math.min(
     Math.max(60, w * 0.25),
     Math.max(50, Math.ceil(yLabelPx) + 32),
@@ -303,6 +502,8 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
   // escape the SVG, even while the measured label gutter is settling.
   const padL = Math.min(measuredPadL, Math.max(0, w - padR - 1));
   const plotW = Math.max(1, w - padL - padR);
+  const legendLayout = layoutLegend(safeSeries, plotW, 6.4);
+  const padB = Math.max(basePadB, legendLayout.height + 30);
   const plotH = Math.max(10, h - padT - padB);
   const maxBin = Math.max(1, ...bins.map(bin => bin.total));
   const maxCum = Math.max(1, ...safeSeries.map(item => totals[item.key] || 0));
@@ -334,21 +535,7 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
     const idx = timeBinIndexAtX(bins, range, padL, plotW, mx);
     if (idx < 0) { setTip(null); return; }
     const bin = bins[idx];
-    const lines = [];
-    safeSeries.forEach(item => {
-      const period = bin.values[item.key] || 0;
-      const points = cumulative[item.key] || [];
-      const cumulativePoint = points[idx + 1];
-      lines.push([`${item.label} period`, humanFmt(period), item.color]);
-      lines.push([`${item.label} cumulative`, humanFmt(cumulativePoint ? cumulativePoint.v : 0), item.color]);
-    });
-    lines.push(['interval events', String(bin.total)]);
-    safeSeries.forEach(item => {
-      const period = bin.values[item.key] || 0;
-      const selectedTotal = totals[item.key] || 0;
-      lines.push([`${item.label} % selected-range total`, selectedTotal > 0
-        ? `${((period / selectedTotal) * 100).toFixed(2)}%` : '0%', item.color]);
-    });
+    const lines = buildTooltipLines(bin, cumulative, safeSeries, idx, totals);
     setTip({
       x: mx, y: my, idx,
       title: `${fmtDate(bin.start, {full: true})} – ${fmtDate(bin.end, {full: true})} UTC`,
@@ -374,19 +561,17 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
         ))}
         <g clipPath={`url(#${clipId})`}>
           {bins.map((bin, binIdx) => {
-            const {x, width} = timeBarRect(bin, range, padL, plotW);
-            let baseline = 0;
+            const segments = buildStackedBarSegments(
+              bin, safeSeries, range, padL, plotW, maxBin, plotH, padT,
+              timeBarRect(bin, range, padL, plotW),
+            );
             return (
               <g key={`bar-${binIdx}`}>
-                {safeSeries.map((item) => {
-                  const value = bin.values[item.key] || 0;
-                  const bottom = yBar(baseline);
-                  baseline += value;
-                  const top = yBar(baseline);
-                  return <rect data-time-bar="" key={item.key} x={x} y={top}
-                    width={width} height={Math.max(0, bottom - top)}
-                    fill={item.color} fillOpacity={tip && tip.idx === binIdx ? 0.85 : 0.3} />;
-                })}
+                {segments.map(segment => (
+                  <rect data-time-bar="" key={segment.key} x={segment.x} y={segment.y}
+                    width={segment.width} height={segment.height}
+                    fill={segment.color} fillOpacity={tip && tip.idx === binIdx ? 0.85 : 0.3} />
+                ))}
               </g>
             );
           })}
@@ -425,11 +610,15 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
         <text x={w - 12} y={padT + plotH / 2} fontSize="9" fill={TH.textDim}
           textAnchor="middle" fontFamily="monospace"
           transform={`rotate(-90 ${w - 12} ${padT + plotH / 2})`}>cumulative events</text>
-        <g transform={`translate(${padL}, ${h - 25})`}>
-          {safeSeries.map((item, index) => (
-            <g key={`legend-${item.key}`} transform={`translate(${index * 150}, 0)`}>
+        <g transform={`translate(${padL}, ${h - legendLayout.height - 8})`}>
+          {legendLayout.items.map(item => (
+            <g key={`legend-${item.key}`} transform={`translate(${item.x}, ${item.y})`}>
               <line x1={0} x2={18} y1={5} y2={5} stroke={item.color} strokeWidth="2" />
-              <text x={24} y={9} fontSize="10" fill={TH.text} fontFamily="monospace">{item.label}</text>
+              <text x={24} y={9} fontSize="10" fill={TH.text} fontFamily="monospace">
+                {item.labelLines.map((line, lineIndex) => (
+                  <tspan key={lineIndex} x={24} dy={lineIndex === 0 ? 0 : 12}>{line}</tspan>
+                ))}
+              </text>
             </g>
           ))}
         </g>
@@ -441,6 +630,9 @@ function StackedCumulativeTimeSeriesPanel({title, events, series, range, binMs})
 
 window.StackedCumulativeTimeSeriesPanel = StackedCumulativeTimeSeriesPanel;
 window.buildStackedTimeSeriesData = buildStackedTimeSeriesData;
+window.buildStackedBarSegments = buildStackedBarSegments;
+window.buildTooltipLines = buildTooltipLines;
+window.layoutLegend = layoutLegend;
 window.dashboardTheme = TH;
 window.humanFmt = humanFmt;
 window.fmtDate = fmtDate;

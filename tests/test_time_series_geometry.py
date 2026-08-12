@@ -51,10 +51,12 @@ def _probe(events: list[dict], range_: dict, bin_ms: int) -> dict:
       if (start < 0 || end < 0 || end <= start) throw new Error('geometry block missing');
       eval(src.slice(start, end) + '\\nwindow.__chart = {{' +
         'buildStackedTimeSeriesData, timeX, timeBarRect, timeBinIndexAtX,' +
-        'boundedTimeIntervals' +
+        'boundedTimeIntervals, buildStackedBarSegments, buildTooltipLines,' +
+        'layoutLegend' +
         '}};');
       const series = {json.dumps(SERIES)};
       const events = {json.dumps(events)};
+      const sourceBefore = JSON.stringify(events);
       const range = {json.dumps(range_)};
       const built = window.__chart.buildStackedTimeSeriesData(events, series, range, {bin_ms});
       const rects = built.bins.map(bin => window.__chart.timeBarRect(bin, range, 60, 400));
@@ -64,7 +66,12 @@ def _probe(events: list[dict], range_: dict, bin_ms: int) -> dict:
             [key, points.map(point => window.__chart.timeX(point.ts, range, 60, 400))]));
       const indices = [59, 60, 299, 300, 459, 460, 461]
         .map(x => window.__chart.timeBinIndexAtX(built.bins, range, 60, 400, x));
-      console.log(JSON.stringify({{built, rects, cumulativeX, indices}}));
+      const tooltip = built.bins.length
+        ? window.__chart.buildTooltipLines(
+            built.bins[0], built.cumulative, series, 0, built.totals)
+        : [];
+      console.log(JSON.stringify({{built, rects, cumulativeX, indices, tooltip,
+        sourceUnchanged: JSON.stringify(events) === sourceBefore}}));
     """
     # The probe is deliberately self-contained.  The production source only
     # exposes helpers through the browser global, not through CommonJS.
@@ -190,6 +197,122 @@ def test_unsorted_events_and_bucket_rows_do_not_change_the_result():
         "completed": 1,
         "not_planned": 0,
     }
+
+
+def test_dense_api_intervals_are_preserved_without_rebinning():
+    result = _probe(
+        [
+            {"start": 100, "end": 120, "opened": 2, "completed": 1, "not_planned": 0},
+            {"start": 120, "end": 240, "opened": 0, "completed": 2, "not_planned": 0},
+            {"start": 240, "end": 360, "opened": 1, "completed": 0, "not_planned": 3},
+            {"start": 360, "end": 400, "opened": 0, "completed": 0, "not_planned": 1},
+        ],
+        {"start": 100, "end": 400},
+        10_000,
+    )
+    assert [(bin["start"], bin["end"]) for bin in result["built"]["bins"]] == [
+        (100, 120), (120, 240), (240, 360), (360, 400)
+    ]
+    assert result["built"]["cumulative"]["opened"] == [
+        {"ts": 100, "v": 0, "binIdx": -1},
+        {"ts": 120, "v": 2, "binIdx": 0},
+        {"ts": 240, "v": 2, "binIdx": 1},
+        {"ts": 360, "v": 3, "binIdx": 2},
+        {"ts": 400, "v": 3, "binIdx": 3},
+    ]
+    assert result["tooltip"][:4] == [
+        ["Opened period", "2", "#00d4aa"],
+        ["Opened cumulative", "2", "#00d4aa"],
+        ["Completed period", "1", "#ff9c5a"],
+        ["Completed cumulative", "1", "#ff9c5a"],
+    ]
+    assert result["tooltip"][-1] == ["Not planned % selected-range total", "0.00%", "#a98bff"]
+    assert result["sourceUnchanged"]
+
+
+def test_pre_range_malformed_and_unknown_point_events_are_ignored_without_mutation():
+    events = [
+        {"ts": -1, "key": "opened"},
+        {"ts": "not-a-time", "key": "opened"},
+        {"ts": 10, "key": "unknown", "value": 99},
+        {"ts": 20, "key": "opened", "value": 2},
+    ]
+    result = _probe(events, {"start": 0, "end": 40}, 40)
+    assert result["built"]["totals"] == {"opened": 2, "completed": 0, "not_planned": 0}
+    assert result["sourceUnchanged"]
+
+
+def test_overlapping_and_out_of_range_dense_intervals_fail_deterministically():
+    script = r"""
+      const fs = require('fs');
+      const src = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const start = src.indexOf('function boundedTimeIntervals');
+      const end = src.indexOf('function Tooltip', start);
+      eval(src.slice(start, end) + '\nwindow.__chart = {buildStackedTimeSeriesData};');
+      const series = [{key: 'opened', label: 'Opened', color: '#00d4aa'}];
+      const range = {start: 100, end: 400};
+      const cases = [
+        [{start: 100, end: 200, opened: 1}, {start: 150, end: 250, opened: 1}],
+        [{start: 100, end: 450, opened: 1}],
+        [{start: 100, end: 100, opened: 1}],
+        [{start: 'bad', end: 200, opened: 1}],
+      ];
+      const outcomes = cases.map(rows => {
+        try { window.__chart.buildStackedTimeSeriesData(rows, series, range, 10); return 'accepted'; }
+        catch (error) { return error.name + ':' + error.message; }
+      });
+      console.log(JSON.stringify(outcomes));
+    """
+    outcomes = _node("global.window = {};\n" + script)
+    assert all(value.startswith("TypeError:") for value in outcomes)
+
+
+def test_stacked_segments_are_bottom_up_and_plot_bounded():
+    script = r"""
+      const fs = require('fs');
+      const src = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const start = src.indexOf('function boundedTimeIntervals');
+      const end = src.indexOf('function Tooltip', start);
+      eval(src.slice(start, end) + '\nwindow.__chart = {buildStackedBarSegments};');
+      const bin = {start: 0, end: 100, values: {a: 2, b: 3, c: 1}, total: 6};
+      const series = [
+        {key: 'a', label: 'A', color: '#a'},
+        {key: 'b', label: 'B', color: '#b'},
+        {key: 'c', label: 'C', color: '#c'},
+      ];
+      console.log(JSON.stringify(window.__chart.buildStackedBarSegments(
+        bin, series, {start: 0, end: 100}, 10, 20, 6)));
+    """
+    segments = _node("global.window = {};\n" + script)
+    assert [segment["key"] for segment in segments] == ["a", "b", "c"]
+    assert [segment["value"] for segment in segments] == [2, 3, 1]
+    assert segments[0]["y"] > segments[1]["y"] > segments[2]["y"]
+    assert all(segment["x"] >= 10 for segment in segments)
+    assert all(segment["x"] + segment["width"] <= 30 for segment in segments)
+
+
+def test_responsive_legend_wraps_long_labels_inside_mobile_width():
+    script = r"""
+      const fs = require('fs');
+      const src = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const start = src.indexOf('function boundedTimeIntervals');
+      const end = src.indexOf('function Tooltip', start);
+      eval(src.slice(start, end) + '\nwindow.__chart = {layoutLegend};');
+      const series = [
+        {key: 'one', label: 'Opened from external repositories', color: '#1'},
+        {key: 'two', label: 'Completed after review', color: '#2'},
+        {key: 'three', label: 'Closed without merging', color: '#3'},
+      ];
+      console.log(JSON.stringify(window.__chart.layoutLegend(series, 180, 6.4)));
+    """
+    legend = _node("global.window = {};\n" + script)
+    assert legend["width"] == 180
+    assert len(legend["items"]) == 3
+    assert legend["height"] > 15
+    for item in legend["items"]:
+        assert item["x"] >= 0
+        assert item["x"] + item["width"] <= 180
+        assert all(len(line) <= item["maxChars"] for line in item["labelLines"])
 
 
 def test_small_width_plot_has_bounded_geometry():
