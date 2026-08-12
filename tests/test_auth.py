@@ -9,9 +9,10 @@ from backend import auth
 def testpbkdf2_known_vector():
     salt = "00112233445566778899aabbccddeeff"
     pw = "correct horse battery staple"
-    digest = auth.pbkdf2(pw, salt)
-    assert isinstance(digest, str) and len(digest) == 64
-    assert auth.pbkdf2(pw, salt) == digest
+    # Generated independently with OpenSSL 3.5.6:
+    # PBKDF2-HMAC-SHA256, 200,000 iterations, 32-byte derived key.
+    expected = "42a5c1bd2688b2ae277592b29bed704d0e8cf931721b0374ff0a16e75ab56a97"
+    assert auth.pbkdf2(pw, salt) == expected
 
 
 def test_set_then_verify_roundtrip():

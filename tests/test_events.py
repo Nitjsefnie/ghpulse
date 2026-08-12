@@ -29,3 +29,21 @@ async def test_shutdown_signal_wakes_subscribers_before_loop_clear():
     await asyncio.wait_for(event.wait(), timeout=1)
     events.clear_loop()
     assert events.shutdown_event() is None
+
+
+@pytest.mark.asyncio
+async def test_open_loop_broadcast_delivers_and_unsubscribes():
+    """A live SSE subscriber receives a worker-thread broadcast."""
+    events.set_loop(asyncio.get_running_loop())
+    queue = events.subscribe()
+    try:
+        await asyncio.to_thread(
+            events.broadcast_threadsafe,
+            "ingest_done",
+            {"ok": True},
+        )
+        payload = await asyncio.wait_for(queue.get(), timeout=1)
+        assert payload == 'event: ingest_done\ndata: {"ok": true}\n\n'
+    finally:
+        events.unsubscribe(queue)
+        events.clear_loop()

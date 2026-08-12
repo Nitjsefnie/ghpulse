@@ -125,10 +125,13 @@ def test_logout_clears_cookie(app, fake_user):
     )
     r = client.get("/logout", follow_redirects=False)
     assert r.status_code in (302, 303)
-    assert any(
-        session_mod.SESSION_COOKIE_NAME in v
-        for v in r.headers.get_list("set-cookie")
+    deletion = next(
+        v for v in r.headers.get_list("set-cookie")
+        if v.lower().startswith(f"{session_mod.SESSION_COOKIE_NAME.lower()}=")
     )
+    assert f"{session_mod.SESSION_COOKIE_NAME}=" in deletion
+    assert "max-age=0" in deletion.lower()
+    assert "expires=" in deletion.lower()
 
 
 def test_session_cookie_round_trip(app, fake_user):
