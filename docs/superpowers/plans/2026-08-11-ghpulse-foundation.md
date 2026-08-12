@@ -30,7 +30,7 @@
 - `backend/api.py`: `/api/me`, `/api/repositories`, `/api/events`.
 - `backend/api_dashboard.py`: aggregate SQL and response contract for two panels.
 - `backend/github_source.py`: narrow adapter around `vendor/gh-widgets/ghwidgets_data.py`.
-- `backend/ingest.py`: locked full/incremental sync, state upsert, reconciliation, snapshot export.
+- `backend/ingest.py`: locked complete-snapshot sync, state upsert, reconciliation, snapshot export.
 - `backend/schema.sql`: repositories, issues, pull_requests, ingest_runs, sync_state.
 - Claudit-derived `backend/auth.py`, `login.py`, `session.py`, `db.py`, `events.py`, `cache.py`.
 - `public/index.html`, `public/app.css`: proven shell and visual tokens.
@@ -149,7 +149,7 @@ Load the submodule module by a deterministic repository-relative path, validate 
 
 - [ ] **Step 5: Implement idempotent schema**
 
-Use GitHub node IDs as primary keys. Repository foreign keys cascade to items. Add indexes on repository, created, updated, closed, and merged timestamps. `sync_state` is a singleton row with `last_successful_high_water`; `ingest_runs` records full/incremental trigger, counts, timestamps, and error.
+Use GitHub node IDs as primary keys. Repository foreign keys cascade to items. Add indexes on repository, created, updated, closed, and merged timestamps. `sync_state` is a singleton row with the last committed/source snapshot timestamps; `ingest_runs` records trigger, counts, timestamps, and error.
 
 - [ ] **Step 6: Apply schema twice in a disposable database**
 
@@ -168,7 +168,7 @@ git commit -m "feat: add GitHub source and current-state schema"
 
 ---
 
-### Task 3: Full and incremental ingest
+### Task 3: Complete current-state ingest
 
 **Files:**
 - Create: `backend/ingest.py`
@@ -178,7 +178,7 @@ git commit -m "feat: add GitHub source and current-state schema"
 
 **Interfaces:**
 - Consumes: normalized snapshot dictionaries and visualization DB pool.
-- Produces: `run_ingest(trigger: str, *, full: bool = False) -> dict`.
+- Produces: `run_ingest(trigger: str) -> dict`.
 - Produces: `progress_snapshot() -> dict`.
 - Produces: atomic exported snapshot at `GH_SNAPSHOT_FILE`.
 
@@ -186,14 +186,14 @@ git commit -m "feat: add GitHub source and current-state schema"
 
 ```python
 def test_changed_issue_replaces_final_state(run_with_snapshots, db_rows):
-    run_with_snapshots("snapshot_initial.json", full=True)
-    run_with_snapshots("snapshot_changed.json", full=False)
+    run_with_snapshots("snapshot_initial.json")
+    run_with_snapshots("snapshot_changed.json")
     issue = db_rows("SELECT state, state_reason, closed_at FROM issues WHERE node_id='I_1'")[0]
     assert issue.state_reason == "NOT_PLANNED"
 
-def test_failed_full_sync_never_deletes_unseen(existing_rows, failing_source):
+def test_failed_complete_sync_never_deletes_unseen(existing_rows, failing_source):
     with pytest.raises(SourceError):
-        ingest.run_ingest("test", full=True)
+        ingest.run_ingest("test")
     assert existing_rows() == 3
 ```
 
@@ -206,9 +206,9 @@ Expected: import failure.
 
 Upsert repositories first, then issues and PRs. Every mutable field is replaced from the current snapshot. Reject any record that is not already public and external even though the pinned upstream producer enforces that boundary. Record per-run counts.
 
-- [ ] **Step 4: Implement safe reconciliation and high-water state**
+- [ ] **Step 4: Implement safe complete reconciliation and sync state**
 
-Full runs collect seen IDs and delete unseen rows only after the entire source fetch and every upsert succeed. Incremental runs never delete. Advance high-water only on complete success and retain an overlap window for the next fetch.
+Every run consumes one complete validated snapshot. Collect seen IDs and delete unseen rows only in the same transaction after the entire source fetch and every upsert succeed. Record the committed/source snapshot timestamps only on success.
 
 - [ ] **Step 5: Implement locking, export, cache/SSE hooks**
 
@@ -217,7 +217,7 @@ Use Claudit's non-blocking ingest lock semantics. After a data-changing commit, 
 - [ ] **Step 6: Run ingest tests**
 
 Run: `python3 -m pytest tests/test_ingest.py -q`  
-Expected: cold sync, idempotency, state change, failed reconciliation, overlap, reclassification, and snapshot export all pass.
+Expected: cold sync, idempotency, state change, complete reconciliation, failed rollback, external-owner changes, and snapshot export all pass.
 
 - [ ] **Step 7: Commit**
 
@@ -380,7 +380,7 @@ git commit -m "feat: build the two-panel ghpulse dashboard"
 - Create/modify: `tests/test_app.py`, `tests/test_health.py`
 
 **Interfaces:**
-- Produces: startup ingest, hourly incremental scheduler, `/health`, protected `POST /admin/ingest`, static application routes.
+- Produces: startup ingest, hourly complete-snapshot scheduler, `/health`, protected `POST /admin/ingest`, static application routes.
 - Produces: service examples for hourly in-process sync and weekly explicit full resync.
 
 - [ ] **Step 1: Write failing lifecycle and health tests**

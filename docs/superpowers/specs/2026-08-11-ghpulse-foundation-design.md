@@ -109,7 +109,7 @@ Identity and public organisations are refreshed on every successful sync and use
 
 ### ingest_runs and sync_state
 
-Ingest runs record trigger, start/finish, fetched/upserted/deleted counts, whether the pass was full, and errors. Sync state records the last successful high-water timestamp. Incremental passes overlap that timestamp so an interrupted page or equal timestamp cannot create a gap.
+Ingest runs record trigger, start/finish, fetched/upserted/deleted counts, and errors. Sync state records the last successfully committed snapshot timestamp and source generation timestamp. The upstream contract is a complete current snapshot, so ghpulse does not invent an incremental high-water protocol that the source cannot honor.
 
 No state-transition table exists. Each GitHub node has one current row. Upserting a changed row removes its former derived outcome automatically because dashboard events are derived from the current columns at query time.
 
@@ -158,17 +158,13 @@ Counts obey the selected repository and time range. "Currently open" is computed
 
 ## Fetch and reconciliation
 
-### Cold/full sync
+### Complete current-state sync
 
-A cold start and explicit/weekly resync page the entire public authored issue and PR history. Pagination must continue until `hasNextPage` is false. A safety ceiling may abort loudly but must never return a silently partial dataset.
+A startup, scheduled, or manual run pages the entire public authored issue and PR history. Pagination must continue until `hasNextPage` is false. A safety ceiling may abort loudly but must never return a silently partial dataset.
 
-The full pass marks every seen node. After all pages succeed, unseen stored nodes are removed: they are no longer visible, public, authored by the account, or returned by GitHub. Deletion happens only after a completely successful full pass.
+Every pass marks each seen node. After all pages succeed, one transaction upserts current rows and removes unseen stored nodes: they are no longer visible, public, external, authored by the account, or returned by GitHub. Deletion happens only inside a completely successful transaction.
 
-### Hourly incremental sync
-
-The hourly pass fetches items updated since an overlap before the last successful high-water timestamp and upserts them. The high-water mark advances only after every page succeeds. Incremental sync never deletes unseen rows.
-
-The hourly job runs under a non-blocking process lock. A concurrent tick exits cleanly. Per-object/page failures are recorded and leave the high-water mark unchanged so the next run retries.
+The hourly job runs under a non-blocking process lock. A concurrent tick exits cleanly. Acquisition/page or transaction failures are recorded and leave the prior rows and sync state unchanged so the next run retries the complete current snapshot.
 
 ### Derived state and response caching
 
@@ -197,8 +193,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 ## Error handling
 
 - GraphQL errors and incomplete pagination fail the sync rather than committing a partial reconciliation.
-- A failed incremental sync preserves current rows, current high-water state, and the last good dashboard response.
-- A failed full sync never deletes unseen rows.
+- A failed acquisition or transaction preserves all current rows, sync state, and the last good dashboard response; unseen rows are reconciled only inside a fully successful complete-snapshot transaction.
 - A corrupt or incompatible exported snapshot is rejected by the public `gh-widgets` data API; standalone renderers remain independent of that interchange file.
 - Unknown issue state reasons remain stored but do not enter either final-outcome series until explicitly mapped.
 - Missing outcome timestamps exclude that outcome event and surface an ingest warning; timestamps are never guessed.
@@ -215,7 +210,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 
 ### Backend
 
-- Fixture-driven GraphQL pages cover cold sync, incremental overlap, full reconciliation, and failure rollback.
+- Fixture-driven complete snapshots cover cold sync, idempotency, reconciliation, state replacement, and failure rollback.
 - State changes prove old derived outcomes disappear and new outcomes appear once.
 - Repository-owner/organisation changes reclassify existing rows.
 - API tests cover range, repository filter, guest access, adaptive buckets, empty data, and current-open summaries.
@@ -240,7 +235,7 @@ Both authenticated and guest sessions may view aggregate panels and use the rang
 
 ## Deployment
 
-Ship a systemd service behind nginx, following Claudit's deployment pattern. Startup triggers an ingest; APScheduler runs hourly incremental sync; a separate timer or service argument performs the weekly full resync. PostgreSQL schema application is idempotent. Environment includes visualization/auth DSNs, cookie/admin secrets, GitHub user/token settings, extra insiders, snapshot output path, and parser/source version.
+Ship a systemd service behind nginx, following Claudit's deployment pattern. Startup triggers a complete ingest and APScheduler repeats it hourly; no second weekly mode exists. PostgreSQL schema application is idempotent. Environment includes visualization/auth DSNs, cookie/admin secrets, GitHub user/token settings, snapshot output path, and parser/source version.
 
 The submodule commit is part of every deploy. Deployment fails if it is missing or its public API/schema version does not match `ghpulse`.
 
@@ -249,10 +244,10 @@ The submodule commit is part of every deploy. Deployment fails if it is missing 
 | Risk | Mitigation |
 |---|---|
 | Current-state rewrites make historical charts change | This is the explicit product rule; fixtures make the behavior visible and deterministic. |
-| GitHub pagination caps or API cost | Complete cursor pagination, incremental overlap, cache reuse, and loud failure instead of truncation. |
+| GitHub pagination caps or API cost | Complete cursor pagination, one-account scope, scheduled cadence, and loud failure instead of truncation. |
 | `gh-widgets` and dashboard normalization drift | One importable upstream module, a pinned submodule commit, and snapshot contract tests on both sides. |
 | Claudit UI fixes diverge after copying | Preserve component boundaries and regression tests; selectively port proven fixes rather than inventing replacements. |
-| Full resync removes data after a partial fetch | Reconciliation/deletion occurs only after a fully successful pass. |
+| Reconciliation removes data after a partial fetch | Reconciliation/deletion occurs only inside a fully successful complete-snapshot transaction. |
 | Guest access leaks credentials | Only aggregate public data is exposed; tokens and internal snapshots remain server-side. |
 
 ## Initial file inventory
