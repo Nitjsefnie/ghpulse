@@ -109,6 +109,18 @@ jobs:
           GHPULSE_BROWSER_SMOKE: '1'
         run: python -W error::DeprecationWarning -m pytest tests/test_browser_smoke.py -q -m browser
 
+      - name: Exercise the final real integration boundary explicitly
+        env:
+          GHPULSE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          DATABASE_URL_VIZ: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          DATABASE_URL_AUTH: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          ADMIN_TOKEN: ci-test-admin-token
+          COOKIE_SECURE: '0'
+          GHPULSE_BROWSER_SMOKE: '1'
+        run: |
+          python -W error::DeprecationWarning -m pytest \
+            tests/test_final_integration.py -q -ra
+
       - name: Run pinned gh-widgets suite
         working-directory: vendor/gh-widgets
         run: python -m unittest discover -v

@@ -6,6 +6,7 @@ data module from the checked-out submodule instead of importing whichever
 """
 
 import importlib.util as _importlib_util
+import os as _os
 from pathlib import Path as _Path
 import sys as _sys
 from types import ModuleType as _ModuleType
@@ -115,6 +116,12 @@ def _validate_public_boundary(snapshot: object) -> dict:
 
 def fetch_snapshot(token: str, login: str) -> dict:
     """Fetch and validate one public, normalized snapshot for ``login``."""
+    fixture = _os.environ.get("GHPULSE_TEST_SOURCE_SNAPSHOT", "").strip()
+    if fixture:
+        # The final integration test exercises the same validated source
+        # boundary without depending on a live GitHub account. This explicit
+        # test-only switch is never enabled by the production environment.
+        return load_snapshot_file(fixture)
     return _validate_public_boundary(
         _ghwidgets_data.fetch_authored_snapshot(token, login)
     )
