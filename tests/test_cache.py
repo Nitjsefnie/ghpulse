@@ -48,6 +48,7 @@ def test_cache_response_decorator_caches_and_bypasses():
 def test_invalidate_serves_stale_then_refreshes():
     """Ingest marks entries stale; a stale hit is served immediately and
     the value is recomputed off the request path."""
+    cache_mod.start_refresh_workers()
     calls = []
 
     @cache_response
