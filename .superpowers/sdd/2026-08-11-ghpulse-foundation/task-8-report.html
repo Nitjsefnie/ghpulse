@@ -3,101 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ghpulse — Final Integration Verification</title>
+<title>ghpulse — Task 8 Final Integration Verification</title>
 <style>
-:root { --bg:#1b1a17; --panel:#252420; --ink:#f5f3ec; --muted:#8f8d82;
-  --line:#3a3833; --accent:#d97757; --ok:#8fa56e; --warn:#e08b7f;
-  --mono:ui-monospace,'SF Mono',Menlo,monospace; --sans:system-ui,-apple-system,sans-serif; }
-* { box-sizing:border-box; }
-body { margin:0; padding:48px 24px 96px; background:var(--bg); color:var(--ink);
-  font:15px/1.6 var(--sans); }
-.page { max-width:960px; margin:auto; }
-header { border-bottom:1px solid var(--line); padding-bottom:24px; margin-bottom:32px; }
-h1,h2 { font-weight:500; letter-spacing:-.01em; }
-h1 { font-size:38px; margin:0 0 8px; }
-h2 { font-size:24px; margin:36px 0 8px; }
-.meta,.mono { font-family:var(--mono); font-size:12px; color:var(--muted); }
-.status { display:inline-block; padding:5px 10px; border:1px solid var(--warn);
-  color:var(--warn); border-radius:999px; font:11px var(--mono); text-transform:uppercase; }
-.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; }
-ul { padding-left:22px; }
-li { margin:5px 0; }
-code { font-family:var(--mono); font-size:.9em; color:#cfccc2; }
-table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); }
-th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
-th { color:var(--muted); font:11px var(--mono); text-transform:uppercase; }
-tr:last-child td { border-bottom:0; }
-.ok { color:var(--ok); }
-.warn { color:var(--warn); }
-footer { margin-top:48px; border-top:1px solid var(--line); padding-top:16px; color:var(--muted); font:12px var(--mono); }
+:root{--ivory:#1B1A17;--slate:#F5F3EC;--clay:#D97757;--oat:#3A352B;--olive:#8FA56E;--rust:#E08B7F;--gray1:#2E2C27;--gray3:#3A3833;--gray5:#8F8D82;--gray7:#CFCCC2;--white:#252420;--sans:system-ui,-apple-system,sans-serif;--serif:ui-serif,Georgia,serif;--mono:ui-monospace,'SF Mono',Menlo,monospace}
+*{box-sizing:border-box}body{margin:0;padding:48px 24px 110px;background:var(--ivory);color:var(--slate);font:15px/1.6 var(--sans);-webkit-font-smoothing:antialiased}.page{max-width:1080px;margin:auto}header{margin-bottom:38px;border-bottom:1px solid var(--gray3);padding-bottom:24px}.top{display:flex;justify-content:space-between;align-items:baseline;gap:14px;flex-wrap:wrap}h1,h2{font-family:var(--serif);font-weight:500;letter-spacing:-.01em}h1{font-size:38px;margin:0}h2{font-size:25px;margin:0 0 7px}h3{font-size:17px;font-weight:600;margin:22px 0 5px}.meta,code,pre,.pill{font-family:var(--mono)}.meta{color:var(--gray5);font-size:12px}.pill{display:inline-block;padding:4px 10px;border:1px solid var(--rust);border-radius:999px;color:var(--rust);font-size:11px;text-transform:uppercase;letter-spacing:.05em}.lede{color:var(--gray7);max-width:850px}.toc{background:var(--gray1);border:1px solid var(--gray3);border-radius:12px;padding:17px 20px;margin-bottom:42px}.toc strong{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--gray5)}.toc ul{display:flex;flex-wrap:wrap;gap:8px 22px;margin:10px 0 0;padding-left:18px}.toc a{color:var(--clay)}section{margin-bottom:44px}hr{border:0;border-top:1px solid var(--gray3);margin:0 0 18px}.band{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}@media(max-width:760px){.band{grid-template-columns:repeat(2,1fr)}}.card,.stat{background:var(--white);border:1px solid var(--gray3);border-radius:12px;padding:17px 19px}.stat-num{font:38px/1 var(--serif);margin-bottom:5px}.stat-label{color:var(--gray5);font-size:11px;text-transform:uppercase;letter-spacing:.05em}.ok{color:var(--olive)}.warn{color:var(--rust)}table{width:100%;border-collapse:separate;border-spacing:0;background:var(--white);border:1px solid var(--gray3);border-radius:12px;overflow:hidden}th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--gray1);vertical-align:top}th{background:var(--gray1);color:var(--gray5);font-size:11px;text-transform:uppercase;letter-spacing:.05em}tr:last-child td{border-bottom:0}ul{padding-left:23px}li{margin:5px 0}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--gray1);border:1px solid var(--gray3);border-radius:10px;padding:15px;color:var(--gray7);font-size:11px;line-height:1.5}code{font-size:.9em;color:var(--gray7)}footer{border-top:1px solid var(--gray3);padding-top:18px;color:var(--gray5);font:12px var(--mono)}
 </style>
 </head>
-<body>
-<main class="page">
-<header>
-  <h1>ghpulse — Final Integration Verification</h1>
-  <div class="meta">2026-08-12 · feature/ghpulse-foundation · evidence HEAD 4716606</div>
-  <p><span class="status">DONE_WITH_CONCERNS</span></p>
-  <p>All local gates are verified. The sole remaining concern is external:
-  the exact gh-widgets gitlink is not yet published to its configured remote.</p>
-</header>
-
-<section>
-<h2>Repository and dependency</h2>
-<div class="card"><ul>
-  <li>Base: <code>ca70d3107436cb82d3cda643c340d5296bc72cd6</code>.</li>
-  <li>Worktree clean; <code>git submodule update --init --recursive</code> exited 0.</li>
-  <li>Exact gitlink: <code>6f7a02c8e1777f17898879be3c31b46d77e61d63</code>.</li>
-  <li>URL: <code>https://github.com/Nitjsefnie/gh-widgets.git</code>.</li>
-  <li><code>git ls-remote</code> for the exact object exited 2 with no match;
-    the remote <code>main</code> ref is reachable. No fallback or push was used.</li>
-</ul></div>
-</section>
-
-<section>
-<h2>Verification gates</h2>
-<table><thead><tr><th>Gate</th><th>Evidence</th></tr></thead><tbody>
-<tr><td>ghpulse pytest</td><td class="ok">134 passed in 39.87s; real PostgreSQL DSNs; zero skips; browser smoke enabled.</td></tr>
-<tr><td>Quality</td><td class="ok">Pyright 0 errors; Pylint 10.00/10.00; pycodestyle and Ruff exit 0.</td></tr>
-<tr><td>Frontend</td><td class="ok">Bun JSX/loading order passed; 19 app/chart contract tests passed.</td></tr>
-<tr><td>Browser</td><td class="ok">Strict Uvicorn/Chromium smoke: 14 passed, no console/page/request/CSP errors.</td></tr>
-<tr><td>gh-widgets</td><td class="ok">Pinned checkout: 226 unittest tests passed.</td></tr>
-<tr><td>Control chars</td><td class="ok">55 tracked files clean.</td></tr>
-</tbody></table>
-</section>
-
-<section>
-<h2>Current-state proof</h2>
-<div class="card"><p>Initial fixture totals were issues opened 2/completed 1/not planned 0 and
-PRs opened 2/merged 0/closed unmerged 1. After the changed complete snapshot,
-totals were issues opened 1/completed 0/not planned 1 and PRs opened 1/merged
-1/closed unmerged 0. Old current outcomes disappeared and new current outcomes
-appeared.</p>
-<p>Chart cumulative lines were zero-anchored at the selected range start and
-terminated at its end for 24h, 7d, 30d, 90d, 1y, and all. Guest and authenticated
-middleware/API/filter requests passed. Both identities rendered exactly two
-panels under production CSP.</p></div>
-</section>
-
-<section>
-<h2>Defect fixed during verification</h2>
-<div class="card"><p>Cancellation of <code>/api/events</code> left <code>Queue.get</code> and
-<code>Event.wait</code> tasks pending. A focused regression failed before the fix
-and passed after commit <code>619ea1f</code>, which cancels and gathers waiters
-both after each wait cycle and in generator teardown. Only
-<code>backend/app.py</code> and <code>tests/test_app.py</code> changed.</p></div>
-</section>
-
-<section>
-<h2>Inspection</h2>
-<div class="card"><p>README, AGENTS, CONTRIBUTING, CI, and the one systemd service agree on
-one account, public external-only current-state data, exactly two panels,
-complete startup/hourly ingest, and no weekly/resync/incremental/export mode.
-The token is absent from served HTML and API payloads. History audit:
-20 commits, 20 co-authored, 0 missing (19 implementation commits plus this evidence commit); each has exactly one
-<code>Co-Authored-By: GPT-5.6 Luna &lt;noreply@openai.com&gt;</code> trailer.</p></div>
-</section>
-<footer>Evidence recorded from the local checkout; neither repository was pushed.</footer>
-</main>
-</body>
-</html>
+<body><main class="page">
+<header><div class="top"><h1>ghpulse — Task 8 verification</h1><span class="pill">DONE_WITH_CONCERNS</span></div><div class="meta">2026-08-12 · feature/ghpulse-foundation · evidence capture e6828665571a4d20ea241d0f6e8b7fec71a313a3</div><p class="lede">All local gates are green. The sole remaining concern is external publication of the exact reviewed gh-widgets object; no push or fallback was used.</p></header>
+<nav class="toc" aria-label="Contents"><strong>Contents</strong><ul><li><a href="#summary">Summary</a></li><li><a href="#gates">Gates</a></li><li><a href="#e2e">End-to-end proof</a></li><li><a href="#remote">Remote evidence</a></li><li><a href="#inspection">Inspection</a></li><li><a href="#history">History</a></li></ul></nav>
+<section id="summary"><h2>Summary</h2><hr><div class="band"><div class="stat"><div class="stat-num ok">135</div><div class="stat-label">strict tests passed</div></div><div class="stat"><div class="stat-num ok">0</div><div class="stat-label">skips</div></div><div class="stat"><div class="stat-num ok">226</div><div class="stat-label">vendor tests</div></div><div class="stat"><div class="stat-num warn">1</div><div class="stat-label">external concern</div></div></div><div class="card" style="margin-top:14px"><p>The implementation/fix evidence range is <code>ca70d31..e682866</code>. This report and its Markdown companion are committed afterward and intentionally excluded from that range to avoid self-referential evidence.</p></div></section>
+<section id="gates"><h2>Verification gates</h2><hr><table><thead><tr><th>Gate</th><th>Exact result</th></tr></thead><tbody><tr><td>Real DSN suite</td><td class="ok">135 passed in 29.72s; 0 skipped; <code>-W error::DeprecationWarning</code>.</td></tr><tr><td>Final integration</td><td class="ok">1 passed in 16.34s with real PostgreSQL/Uvicorn/Chromium.</td></tr><tr><td>Browser smoke</td><td class="ok">1 passed in 6.41s with strict warnings.</td></tr><tr><td>App/chart contracts</td><td class="ok">19 passed in 1.22s.</td></tr><tr><td>Quality</td><td class="ok">Pylint 10.00/10.00; Pyright 0 errors; pycodestyle and Ruff clean.</td></tr><tr><td>Frontend/control chars</td><td class="ok">Bun transpilation/loading order passed; 58 tracked files clean.</td></tr><tr><td>gh-widgets</td><td class="ok">226 unittest tests, OK; exact local pin clean.</td></tr></tbody></table></section>
+<section id="e2e"><h2>End-to-end current-state proof</h2><hr><div class="card"><p>Initial complete snapshot: issues opened 2/completed 1/not planned 0; PRs opened 2/merged 0/closed-unmerged 1. Changed complete snapshot: issues opened 1/completed 0/not planned 1; PRs opened 1/merged 1/closed-unmerged 0. Old final outcomes disappeared and new current outcomes appeared from current PostgreSQL rows.</p><p>Guest and password-authenticated Chromium sessions exercised production middleware, <code>/api/me</code>, dashboard/repository APIs, repository filtering, and admin ingest. All six ranges (<code>24h</code>, <code>7d</code>, <code>30d</code>, <code>90d</code>, <code>1y</code>, <code>all</code>) had cumulative zero anchors at <code>range.start</code> and ended at <code>range.end</code>. Both identities rendered exactly two panels, with no console/page/request/CSP errors; the token was absent from page content.</p><p>The test uses no pool, ingest, API, or session mocks. Its deterministic source selector calls the pinned gh-widgets loader/validator. Only the optional mutable Google Fonts CSS request is fulfilled successfully in the test context after a real CDN 404; production app behavior remains real.</p></div></section>
+<section id="remote"><h2>Remote-only submodule evidence</h2><hr><div class="card"><p>Local pin: <code>6f7a02c8e1777f17898879be3c31b46d77e61d63</code>. Configured remote: <code>https://github.com/Nitjsefnie/gh-widgets.git</code>. Remote <code>main</code>: <code>1263f7168a0813501acd9e2d12566947b5a394c9</code>.</p><pre>fatal: remote error: upload-pack: not our ref 6f7a02c8e1777f17898879be3c31b46d77e61d63
+fatal: the remote end hung up unexpectedly
+isolated_repo=/tmp/tmp.N43Jk9Bo42
+alternates_present=no
+fetch_exit=128</pre><p class="warn">This is the sole portability blocker: the reviewed gitlink object must be published to the configured remote.</p></div></section>
+<section id="inspection"><h2>Drift and privacy inspection</h2><hr><ul><li>README, AGENTS, and CONTRIBUTING agree on one account, two panels, public external current-state rows, complete reconciliation, guest/auth access, and a server-only token.</li><li>CI provisions PostgreSQL/Bun, applies schemas, passes real DSNs to both test steps, rejects skips, and has no fallback for the unpublished gitlink.</li><li>The single service uses complete startup/hourly ingest; no weekly, incremental, resync, export, or second-account mode exists.</li></ul></section>
+<section id="history"><h2>History and coauthors</h2><hr><p>Canonical audit: <code>python3 /root/.agent-bundle/scripts/author_stats.py --list ca70d31..e682866</code> → 22 commits, 22 co-authored, 0 missing. Each has one <code>Co-Authored-By: GPT-5.6 Luna &lt;noreply@openai.com&gt;</code> trailer; history was not rewritten.</p><details><summary>Ordered commits (22)</summary><pre>03960304724f85a697859796ba0770035b69745e feat: bootstrap the ghpulse application shell
+06cd7bc31f6d8441c9a76d752248903b7bf469c8 test: strengthen ghpulse shell contracts
+5d125f4d3e5eb57f40293b6edfe9e379d15083c4 feat: add GitHub source and current-state schema
+7e7e6d7da611e662a4919b06a73cf4f8123ad31a fix: keep ghpulse adapter on public widget APIs
+b97c239cf0eb6b678ea7389eb9f48844b0407096 fix: validate fetched GitHub data in memory
+7e2c1a0a31828b89cfcd13fcb5f558d47d5208e9 feat: ingest current GitHub activity state
+af176430a3f6dc61d1fc89a3b9482de936c51bf9 fix: harden ghpulse ingest failures and schema migration
+544d938e9a69b8f1da9ddeaf2feeeb62a994073a feat: serve external activity timelines
+e969407c927e1fe547074de26809bcb10aef174f fix: keep dashboard reads snapshot-consistent
+c421268495b2805f8f694c5326e7c02f0b3e67bb feat: add stacked cumulative timeline chart
+516247075a4700f624823c959581f6716aeaa8c9 fix: preserve dense timeline intervals and chart geometry
+6b81222c06d4f607a44cd9b5ff024738eb214331 fix: require complete dense timeline coverage
+a8c7f0cbc7f0d8f2b9380dc72fdfb19939c307d4 feat: build the two-panel ghpulse dashboard
+6e4ac7f11a27607d3e65e0b9091bb391d08e5ed5 fix: preserve ghpulse dashboard selection state
+ebf064616b2c33fc5196b33e78d2b0fc243f3c22 test: prove ghpulse refresh and chart contracts
+cd58ba059530b9cdad8d034db852866d6715984f feat: complete ghpulse operations and lifecycle
+adf692230ccc035f721020afdeb7db23ea64472d fix: close ghpulse lifecycle safely
+5a6b52b68b0e1007a5c96c798c615276459249b1 test: make browser smoke warning-free
+619ea1fc11e9e6f05882786db02f73f5aff2dfba fix: clean up cancelled SSE waiters
+3f155af20ca7bf4de07caec5c5bca7e0f34fbe1e docs: record final integration verification
+704b88b1444acf389e9c1d5fd2fb026e4fca43db test: add reproducible final integration gate
+e6828665571a4d20ea241d0f6e8b7fec71a313a3 test: isolate external font asset in browser proof</pre></details></section>
+<footer>Evidence recorded from the local checkout · neither repository was pushed · Markdown companion is adjacent for agent consumption.</footer>
+</main></body></html>
