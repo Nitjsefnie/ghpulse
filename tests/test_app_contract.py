@@ -178,6 +178,40 @@ def _run_app_contract_script(body: str) -> dict:
     return json.loads(proc.stdout)
 
 
+def _run_app_and_chart_contract_script(body: str) -> dict:
+    """Run a Node probe against the app and production chart pure blocks."""
+    script = f"""
+      const fs = require('fs');
+      global.window = {{}};
+      const app = fs.readFileSync('src/app.jsx', 'utf8');
+      const appStart = app.indexOf('// --- pure app contracts ---');
+      const appEnd = app.indexOf('// --- React app ---', appStart);
+      if (appStart < 0 || appEnd <= appStart) throw new Error('app contract block missing');
+      eval(app.slice(appStart, appEnd));
+      const chart = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const formatterStart = chart.indexOf('function humanFmt');
+      const formatterEnd = chart.indexOf('function fmtDate', formatterStart);
+      const chartStart = chart.indexOf('function boundedTimeIntervals');
+      const chartEnd = chart.indexOf('function Tooltip', chartStart);
+      if (formatterStart < 0 || formatterEnd <= formatterStart
+          || chartStart < 0 || chartEnd <= chartStart) throw new Error('chart pure block missing');
+      eval(chart.slice(formatterStart, formatterEnd) + '\\n' + chart.slice(chartStart, chartEnd));
+      (async () => {{
+        {body}
+      }})().catch(error => {{ console.error(error.stack || error); process.exit(1); }});
+    """
+    proc = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
 def test_dashboard_request_state_keeps_selection_provenance_and_drops_old_data():
     if shutil.which("node") is None:
         pytest.skip("node not available for the executable app contract")
@@ -263,6 +297,49 @@ def test_dashboard_request_state_suppresses_out_of_order_results_and_accepts_den
     assert result["last"]["not_planned"] == 1
 
 
+def test_dashboard_payload_buckets_feed_production_chart_geometry_exactly():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_and_chart_contract_script(
+        """
+        const body = {
+          range: '7d', repository: 'R_2', bucket_s: 3600,
+          start: '2026-08-01T00:00:00Z', end: '2026-08-01T03:00:00Z',
+          issues: [
+            {start: '2026-08-01T00:00:00Z', end: '2026-08-01T01:00:00Z', opened: 2, completed: 1, not_planned: 0},
+            {start: '2026-08-01T01:00:00Z', end: '2026-08-01T02:00:00Z', opened: 0, completed: 0, not_planned: 1},
+            {start: '2026-08-01T02:00:00Z', end: '2026-08-01T03:00:00Z', opened: 1, completed: 0, not_planned: 0},
+          ],
+          pull_requests: [], summary: {}, repositories: [],
+        };
+        const model = window.ghpulseAppContract.dashboardToViewModel(body);
+        const built = buildStackedTimeSeriesData(
+          model.issues.events, model.issues.series, model.range, model.binMs);
+        console.log(JSON.stringify({
+          binMs: model.binMs,
+          bounds: built.bins.map(bin => [bin.start, bin.end]),
+          values: built.bins.map(bin => bin.values),
+          totals: built.totals,
+          cumulativeEnd: Object.fromEntries(Object.entries(built.cumulative).map(
+            ([key, points]) => [key, points.at(-1).v])),
+        }));
+        """,
+    )
+    assert result["binMs"] == 3_600_000
+    assert result["bounds"] == [
+        [1785542400000, 1785546000000],
+        [1785546000000, 1785549600000],
+        [1785549600000, 1785553200000],
+    ]
+    assert result["values"] == [
+        {"opened": 2, "completed": 1, "not_planned": 0},
+        {"opened": 0, "completed": 0, "not_planned": 1},
+        {"opened": 1, "completed": 0, "not_planned": 0},
+    ]
+    assert result["totals"] == {"opened": 3, "completed": 1, "not_planned": 1}
+    assert result["cumulativeEnd"] == {"opened": 3, "completed": 1, "not_planned": 1}
+
+
 def test_repository_options_preserve_disappeared_or_deep_linked_selection():
     if shutil.which("node") is None:
         pytest.skip("node not available for the executable app contract")
@@ -337,3 +414,56 @@ def test_sse_refetches_current_selection_reconnects_and_cleans_up():
     assert result["afterDispose"] == 2
     assert result["closed"] is True
     assert result["streamStates"] == ["connected", "reconnecting", "connected"]
+
+
+def test_same_selection_sse_failure_keeps_prior_data_and_marks_it_stale():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_contract_script(
+        """
+        class MockSource {
+          constructor() { this.listeners = {}; this.closed = false; }
+          addEventListener(name, handler) { (this.listeners[name] ||= new Set()).add(handler); }
+          removeEventListener(name, handler) { this.listeners[name]?.delete(handler); }
+          emit(name) { for (const handler of this.listeners[name] || []) handler(); }
+          close() { this.closed = true; }
+        }
+        const requests = [];
+        const states = [];
+        let source;
+        const coordinator = window.ghpulseAppContract.createDashboardRequestCoordinator({
+          fetchJson: (selection, signal) => new Promise((resolve, reject) =>
+            requests.push({selection, signal, resolve, reject})),
+          onStateChange: state => states.push({
+            phase: state.phase,
+            selection: state.selection,
+            data: state.data,
+          }),
+          eventSourceFactory: () => (source = new MockSource()),
+        });
+        const selection = {range: '30d', repository: 'R_1'};
+        const body = {marker: 'prior-valid-body', range: '30d', repository: 'R_1'};
+        coordinator.connect();
+        coordinator.load(selection);
+        requests[0].resolve(body);
+        await Promise.resolve(); await Promise.resolve();
+        source.emit('ingest_done');
+        requests[1].reject(new Error('refresh unavailable'));
+        await Promise.resolve(); await Promise.resolve();
+        const finalState = states[states.length - 1];
+        console.log(JSON.stringify({
+          phase: finalState.phase,
+          selection: finalState.selection,
+          dataSelection: finalState.data && finalState.data.selection,
+          marker: finalState.data && finalState.data.body.marker,
+          requestCount: requests.length,
+        }));
+        """,
+    )
+    assert result == {
+        "phase": "stale",
+        "selection": {"range": "30d", "repository": "R_1"},
+        "dataSelection": {"range": "30d", "repository": "R_1"},
+        "marker": "prior-valid-body",
+        "requestCount": 2,
+    }
