@@ -8,7 +8,6 @@ data module from the checked-out submodule instead of importing whichever
 import importlib.util as _importlib_util
 from pathlib import Path as _Path
 import sys as _sys
-import tempfile as _tempfile
 from types import ModuleType as _ModuleType
 
 
@@ -62,17 +61,9 @@ if getattr(_ghwidgets_data, "SCHEMA_VERSION", None) != _EXPECTED_SCHEMA_VERSION:
         f"{getattr(_ghwidgets_data, 'SCHEMA_VERSION', None)!r}; "
         f"expected {_EXPECTED_SCHEMA_VERSION}"
     )
-for _required in ("fetch_authored_snapshot", "load_snapshot", "write_snapshot"):
+for _required in ("fetch_authored_snapshot", "load_snapshot"):
     if not callable(getattr(_ghwidgets_data, _required, None)):
         raise ImportError(f"gh-widgets data module lacks {_required}()")
-
-
-def _validate_fetched_snapshot(snapshot: object) -> dict:
-    """Run the fetched object through gh-widgets' public validation API."""
-    with _tempfile.TemporaryDirectory(prefix="ghpulse-snapshot-") as directory:
-        path = _Path(directory) / "snapshot.json"
-        _ghwidgets_data.write_snapshot(path, snapshot)
-        return _ghwidgets_data.load_snapshot(path)
 
 
 def _validate_public_boundary(snapshot: object) -> dict:
@@ -81,9 +72,8 @@ def _validate_public_boundary(snapshot: object) -> dict:
     The pinned producer already performs this validation.  Keeping this guard
     in the consumer prevents an accidental vendor update or a custom transport
     from allowing private data into the dashboard before the pin is reviewed.
-    The vendor's public load/write functions handle shape, timestamps, states,
-    and cross-record references; this function adds consumer-owned visibility
-    assertions.
+    The vendor's public fetch/load functions handle the complete snapshot
+    contract; this function adds consumer-owned visibility assertions.
     """
     if not isinstance(snapshot, dict):
         raise ValueError("gh-widgets returned a snapshot object of the wrong type")
@@ -126,9 +116,7 @@ def _validate_public_boundary(snapshot: object) -> dict:
 def fetch_snapshot(token: str, login: str) -> dict:
     """Fetch and validate one public, normalized snapshot for ``login``."""
     return _validate_public_boundary(
-        _validate_fetched_snapshot(
-            _ghwidgets_data.fetch_authored_snapshot(token, login)
-        )
+        _ghwidgets_data.fetch_authored_snapshot(token, login)
     )
 
 

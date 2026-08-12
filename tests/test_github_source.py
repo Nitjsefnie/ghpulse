@@ -83,7 +83,7 @@ def test_load_snapshot_file_rejects_private_records(tmp_path, collection):
         github_source.load_snapshot_file(path)
 
 
-def test_fetch_snapshot_delegates_credentials_and_revalidates_result(monkeypatch):
+def test_fetch_snapshot_delegates_credentials_and_checks_boundary(monkeypatch):
     expected = _fixture()
     calls = []
 
@@ -97,41 +97,43 @@ def test_fetch_snapshot_delegates_credentials_and_revalidates_result(monkeypatch
     assert calls == [("secret-token", "octocat")]
 
 
-def test_fetch_snapshot_rejects_private_upstream_result(monkeypatch):
-    private = _fixture()
-    private["issues"][0]["is_private"] = True
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("private_repository", "public"),
+        ("private_issue", "public"),
+        ("account_owned", "external"),
+        ("missing_account", "malformed"),
+        ("missing_repository_owner", "malformed owner"),
+        ("missing_issue_visibility", "public"),
+        ("unsupported_schema", "schema_version"),
+    ],
+)
+def test_fetch_snapshot_rejects_faulty_producer_boundary(
+    monkeypatch, mutation, message
+):
+    invalid = _fixture()
+    if mutation == "private_repository":
+        invalid["repositories"][0]["isPrivate"] = True
+    elif mutation == "private_issue":
+        invalid["issues"][0]["is_private"] = True
+    elif mutation == "account_owned":
+        invalid["repositories"][0]["owner"]["login"] = "octocat"
+    elif mutation == "missing_account":
+        invalid.pop("account")
+    elif mutation == "missing_repository_owner":
+        invalid["repositories"][0].pop("owner")
+    elif mutation == "missing_issue_visibility":
+        invalid["issues"][0].pop("is_private")
+    elif mutation == "unsupported_schema":
+        invalid["schema_version"] = 999
+    else:  # pragma: no cover - protects the test if a case is mistyped
+        raise AssertionError(mutation)
     monkeypatch.setattr(
         github_source._ghwidgets_data,
         "fetch_authored_snapshot",
-        lambda token, login: private,
+        lambda token, login: invalid,
     )
 
-    with pytest.raises(ValueError, match="public"):
-        github_source.fetch_snapshot("secret-token", "octocat")
-
-
-def test_fetch_snapshot_rechecks_visibility_after_public_vendor_validation(monkeypatch):
-    private = _fixture()
-    private["issues"][0]["is_private"] = True
-    monkeypatch.setattr(
-        github_source._ghwidgets_data,
-        "fetch_authored_snapshot",
-        lambda token, login: private,
-    )
-
-    # Simulate a future public producer/load pair returning an invalid object
-    # after its own validation boundary.  The consumer check must still fail
-    # closed, without reaching into a private vendor validator.
-    monkeypatch.setattr(
-        github_source._ghwidgets_data,
-        "write_snapshot",
-        lambda path, snapshot: None,
-    )
-    monkeypatch.setattr(
-        github_source._ghwidgets_data,
-        "load_snapshot",
-        lambda path: private,
-    )
-
-    with pytest.raises(ValueError, match="public"):
+    with pytest.raises(ValueError, match=message):
         github_source.fetch_snapshot("secret-token", "octocat")
