@@ -35,16 +35,23 @@ def test_schema_uses_node_ids_and_cascading_repository_foreign_keys(schema_text)
 
 
 def test_schema_indexes_all_dashboard_timestamp_dimensions(schema_text):
-    for name in (
-        "repository_id",
-        "created_at",
-        "updated_at",
-        "closed_at",
-        "merged_at",
-    ):
-        assert name in schema_text
-    assert "issues_repository_idx" in schema_text
-    assert "pull_requests_repository_idx" in schema_text
+    required_indexes = {
+        "issues_repository_idx": ("issues", "repository_id"),
+        "issues_created_at_idx": ("issues", "created_at"),
+        "issues_updated_at_idx": ("issues", "updated_at"),
+        "issues_closed_at_idx": ("issues", "closed_at"),
+        "pull_requests_repository_idx": ("pull_requests", "repository_id"),
+        "pull_requests_created_at_idx": ("pull_requests", "created_at"),
+        "pull_requests_updated_at_idx": ("pull_requests", "updated_at"),
+        "pull_requests_closed_at_idx": ("pull_requests", "closed_at"),
+        "pull_requests_merged_at_idx": ("pull_requests", "merged_at"),
+    }
+    for index_name, (table_name, column_name) in required_indexes.items():
+        pattern = (
+            rf"CREATE INDEX IF NOT EXISTS {index_name}\s+"
+            rf"ON {table_name}\s*\(\s*{column_name}\s*\)"
+        )
+        assert re.search(pattern, schema_text), index_name
 
 
 def test_schema_has_ingest_audit_and_singleton_sync_state(schema_text):

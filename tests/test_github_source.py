@@ -42,6 +42,33 @@ def test_load_snapshot_file_rejects_unsupported_schema_version(tmp_path):
         github_source.load_snapshot_file(path)
 
 
+@pytest.mark.parametrize("mutation", ["unknown", "missing"])
+def test_load_snapshot_file_rejects_unknown_or_missing_nested_fields(
+    tmp_path, mutation
+):
+    body = _fixture()
+    if mutation == "unknown":
+        body["issues"][0]["unexpected"] = "not-part-of-v1"
+    else:
+        body["issues"][0].pop("url")
+    path = tmp_path / f"malformed-{mutation}.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="(unknown|missing|required|field)"):
+        github_source.load_snapshot_file(path)
+
+
+def test_load_snapshot_file_rejects_account_owned_repository(tmp_path):
+    body = _fixture()
+    body["repositories"][0]["owner"]["login"] = "octocat"
+    body["repositories"][0]["nameWithOwner"] = "octocat/project"
+    path = tmp_path / "account-owned.json"
+    path.write_text(json.dumps(body), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="(owned|external|public)"):
+        github_source.load_snapshot_file(path)
+
+
 @pytest.mark.parametrize("collection", ["repositories", "issues", "pull_requests"])
 def test_load_snapshot_file_rejects_private_records(tmp_path, collection):
     body = _fixture()
@@ -77,6 +104,33 @@ def test_fetch_snapshot_rejects_private_upstream_result(monkeypatch):
         github_source._ghwidgets_data,
         "fetch_authored_snapshot",
         lambda token, login: private,
+    )
+
+    with pytest.raises(ValueError, match="public"):
+        github_source.fetch_snapshot("secret-token", "octocat")
+
+
+def test_fetch_snapshot_rechecks_visibility_after_public_vendor_validation(monkeypatch):
+    private = _fixture()
+    private["issues"][0]["is_private"] = True
+    monkeypatch.setattr(
+        github_source._ghwidgets_data,
+        "fetch_authored_snapshot",
+        lambda token, login: private,
+    )
+
+    # Simulate a future public producer/load pair returning an invalid object
+    # after its own validation boundary.  The consumer check must still fail
+    # closed, without reaching into a private vendor validator.
+    monkeypatch.setattr(
+        github_source._ghwidgets_data,
+        "write_snapshot",
+        lambda path, snapshot: None,
+    )
+    monkeypatch.setattr(
+        github_source._ghwidgets_data,
+        "load_snapshot",
+        lambda path: private,
     )
 
     with pytest.raises(ValueError, match="public"):
