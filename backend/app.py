@@ -25,6 +25,12 @@ from backend import db  # noqa: E402  # pylint: disable=wrong-import-position
 db.load_dotenv(str(_REPO_ROOT / ".env"))
 
 from backend import api, cache, events, ingest, login, session  # noqa: E402  # pylint: disable=wrong-import-position
+from backend.api_common import (  # noqa: E402  # pylint: disable=wrong-import-position
+    DATABASE_UNAVAILABLE_CODE,
+    DATABASE_UNAVAILABLE_MESSAGE,
+    SYNC_FAILURE_CODE,
+    SYNC_FAILURE_MESSAGE,
+)
 
 _PUBLIC = _REPO_ROOT / "public"
 _SRC = _REPO_ROOT / "src"
@@ -181,7 +187,13 @@ def _health_payload() -> dict:
     last_success = _iso(last_success_value)
     sync_status = sync_row[3] if sync_row and sync_row[3] else None
     sync_error = sync_row[4] if sync_row else None
-    last_error = progress_error or sync_error or (latest_row[6] if latest_row else None)
+    has_sync_error = bool(
+        progress_error
+        or sync_error
+        or (latest_row and latest_row[6])
+        or sync_status == "failure"
+    )
+    public_error = SYNC_FAILURE_MESSAGE if has_sync_error else None
     stale = True
     if last_success_value is not None:
         if hasattr(last_success_value, "tzinfo"):
@@ -203,7 +215,8 @@ def _health_payload() -> dict:
             "trigger": latest_row[3],
             "committed_at": _iso(latest_row[4]),
             "source_snapshot_at": _iso(latest_row[5]),
-            "error": latest_row[6],
+            "error": public_error if latest_row[6] else None,
+            "error_code": SYNC_FAILURE_CODE if latest_row[6] else None,
         }
     return {
         "ok": True,
@@ -211,13 +224,15 @@ def _health_payload() -> dict:
         "ingest_running": running,
         "ingest_progress": progress,
         "last_success": last_success,
-        "last_error": last_error,
+        "last_error": public_error,
+        "last_error_code": SYNC_FAILURE_CODE if public_error else None,
         "stale": stale,
         "sync_status": sync_status,
         "last_attempt": {
             "at": _iso(sync_row[2]) if sync_row else None,
             "status": sync_status,
-            "error": sync_error,
+            "error": SYNC_FAILURE_MESSAGE if has_sync_error else None,
+            "code": SYNC_FAILURE_CODE if has_sync_error else None,
         },
         "last_ingest": last_ingest,
         "now": datetime.now(timezone.utc).isoformat(),
@@ -392,7 +407,8 @@ def health() -> Response:
             {
                 "ok": False,
                 "db": False,
-                "error": str(exc),
+                "error": DATABASE_UNAVAILABLE_MESSAGE,
+                "error_code": DATABASE_UNAVAILABLE_CODE,
                 "now": datetime.now(timezone.utc).isoformat(),
             },
             status_code=503,

@@ -361,14 +361,7 @@ function App() {
       ...options,
     });
     if (!response.ok) {
-      let detail = '';
-      try {
-        const body = await response.json();
-        detail = body && body.detail ? `: ${body.detail}` : '';
-      } catch (_) {
-        // Keep the status as the useful error when the response is not JSON.
-      }
-      throw new Error(`${response.status} ${response.statusText || 'request failed'}${detail}`);
+      throw new Error(`${response.status} ${response.statusText || 'request failed'}`);
     }
     return response.json();
   }, []);

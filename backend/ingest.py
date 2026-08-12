@@ -16,6 +16,7 @@ import threading
 from typing import Any, Iterator
 
 from backend import cache, db, events, github_source
+from backend.api_common import SYNC_FAILURE_CODE, SYNC_FAILURE_MESSAGE
 
 # The validator intentionally uses exact type checks and a single explicit
 # boundary function; its branches/locals are the security contract, not a
@@ -662,10 +663,17 @@ def _post_commit(summary: dict) -> None:
 
 def _post_failure(trigger: str, error: str) -> None:
     """Broadcast durable failure health without exposing source credentials."""
+    del error  # The raw detail remains in the durable audit row and logs only.
     try:
         events.broadcast_threadsafe(
             "ingest_failed",
-            {"trigger": trigger, "status": "failure", "error": error},
+            {
+                "trigger": trigger,
+                "status": "failure",
+                "code": SYNC_FAILURE_CODE,
+                "error": SYNC_FAILURE_MESSAGE,
+                "at": datetime.now(timezone.utc).isoformat(),
+            },
         )
     except Exception:  # pragma: no cover - an event hook cannot undo a failure record
         log.exception("could not broadcast ingest_failed")

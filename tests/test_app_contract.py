@@ -53,6 +53,11 @@ def test_app_does_not_restore_claudit_transcript_or_upload_surfaces():
         assert marker not in src
 
 
+def test_app_does_not_render_server_exception_details():
+    src = APP_JSX.read_text(encoding="utf-8")
+    assert "body.detail" not in src
+
+
 def test_index_loads_react_babel_chart_before_app_and_mounts_app():
     src = INDEX_HTML.read_text(encoding="utf-8")
     assert src.index("react.production.min.js") < src.index("babel.min.js")

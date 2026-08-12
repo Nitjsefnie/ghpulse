@@ -264,6 +264,9 @@ def test_invalid_visibility_or_owner_preserves_state_and_skips_hooks(
     )[0] == before_sync
     assert [item[0] for item in hooks] == ["event"]
     assert hooks[0][1][0] == "ingest_failed"
+    assert hooks[0][1][1]["error"] == "sync failed"
+    assert hooks[0][1][1]["code"] == "SYNC_FAILED"
+    assert "sentinel-ingest-secret" not in str(hooks[0][1][1])
     error = _rows(
         ingest_db,
         "SELECT error FROM ingest_runs "
@@ -329,6 +332,39 @@ def test_failed_acquisition_preserves_current_rows_and_sync_state(
     assert "network down" in _rows(
         ingest_db,
         "SELECT error FROM ingest_runs WHERE trigger = 'failed' ORDER BY id DESC LIMIT 1",
+    )[0][0]
+
+
+def test_failure_event_redacts_raw_audit_error(ingest_db, ingest_module, monkeypatch):
+    snapshot = _snapshot("snapshot_initial.json")
+    _install_source(monkeypatch, ingest_module, snapshot)
+    ingest_module.run_ingest("initial")
+    hooks = []
+    monkeypatch.setattr(
+        ingest_module.events,
+        "broadcast_threadsafe",
+        lambda *args: hooks.append(args),
+    )
+    monkeypatch.setattr(
+        ingest_module,
+        "fetch_snapshot",
+        lambda token, login: (_ for _ in ()).throw(
+            RuntimeError("sentinel-sse-secret")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="sentinel-sse-secret"):
+        ingest_module.run_ingest("event-redaction")
+
+    assert hooks[0][0] == "ingest_failed"
+    assert hooks[0][1]["status"] == "failure"
+    assert hooks[0][1]["code"] == "SYNC_FAILED"
+    assert hooks[0][1]["error"] == "sync failed"
+    assert "sentinel-sse-secret" not in str(hooks[0][1])
+    assert "sentinel-sse-secret" in _rows(
+        ingest_db,
+        "SELECT error FROM ingest_runs "
+        "WHERE trigger = 'event-redaction' ORDER BY id DESC LIMIT 1",
     )[0][0]
 
 

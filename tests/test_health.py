@@ -111,29 +111,33 @@ def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
         "manual",
         None,
         None,
-        "SourceError: GitHub unavailable",
+        "sentinel-health-secret",
     )
     sync = (
         last_success, last_success, now - timedelta(minutes=1),
-        "failure", "SourceError: GitHub unavailable",
+        "failure", "sentinel-health-secret",
     )
     app_module = _install_health_db(monkeypatch, HealthConnection(latest, sync))
     monkeypatch.setattr(
         app_module.ingest,
         "progress_snapshot",
-        lambda: {"phase": "idle", "last_error": "SourceError: GitHub unavailable"},
+        lambda: {"phase": "idle", "last_error": "sentinel-health-secret"},
     )
     monkeypatch.setenv("GHPULSE_STALE_AFTER_SECONDS", "7200")
 
     body = TestClient(app_module.app).get("/health").json()
 
     assert body["last_success"] == last_success.isoformat()
-    assert body["last_error"] == "SourceError: GitHub unavailable"
+    assert body["last_error"] == "sync failed"
+    assert body["last_error_code"] == "SYNC_FAILED"
+    assert "sentinel-health-secret" not in str(body)
     assert body["stale"] is True
     assert body["last_ingest"]["id"] == 8
-    assert body["last_ingest"]["error"] == "SourceError: GitHub unavailable"
+    assert body["last_ingest"]["error"] == "sync failed"
+    assert body["last_ingest"]["error_code"] == "SYNC_FAILED"
     assert body["sync_status"] == "failure"
-    assert body["last_attempt"]["error"] == "SourceError: GitHub unavailable"
+    assert body["last_attempt"]["error"] == "sync failed"
+    assert body["last_attempt"]["code"] == "SYNC_FAILED"
 
 
 def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatch):
@@ -141,7 +145,7 @@ def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatc
 
     @contextmanager
     def broken_connection():
-        raise ConnectionError("database offline")
+        raise ConnectionError("sentinel-database-secret")
         yield  # pragma: no cover
 
     monkeypatch.setattr(app_module.db, "viz_conn", broken_connection)
@@ -152,4 +156,6 @@ def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatc
     body = response.json()
     assert body["ok"] is False
     assert body["db"] is False
-    assert body["error"] == "database offline"
+    assert body["error"] == "database unavailable"
+    assert body["error_code"] == "DATABASE_UNAVAILABLE"
+    assert "sentinel-database-secret" not in str(body)

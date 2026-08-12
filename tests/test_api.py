@@ -222,6 +222,54 @@ def test_routes_are_registered(client):
     assert client.get("/api/dashboard?range=all").status_code == 200
 
 
+def test_dashboard_overlays_uncached_sync_status_without_recomputing_aggregate(
+    guest_client, api_db
+):
+    _seed(api_db)
+    import psycopg
+
+    with psycopg.connect(api_db) as connection:
+        connection.execute(
+            "UPDATE sync_state SET last_attempt_at = %s, last_attempt_status = 'success', "
+            "last_attempt_error = NULL WHERE id = 1",
+            ("2026-08-12T10:00:00Z",),
+        )
+        connection.commit()
+
+    first = guest_client.get("/api/dashboard?range=all").json()
+    assert first["summary"]["sync_status"] == "success"
+    assert first["summary"]["sync_last_attempt_at"].startswith("2026-08-12T10:00:00")
+
+    with psycopg.connect(api_db) as connection:
+        connection.execute(
+            "UPDATE sync_state SET last_attempt_at = %s, last_attempt_status = 'failure', "
+            "last_attempt_error = %s WHERE id = 1",
+            ("2026-08-12T10:01:00Z", "sentinel-sync-secret"),
+        )
+        connection.commit()
+
+    failed = guest_client.get("/api/dashboard?range=all").json()
+    assert failed["issues"] == first["issues"]
+    assert failed["pull_requests"] == first["pull_requests"]
+    assert failed["summary"]["sync_status"] == "failure"
+    assert failed["summary"]["sync_error_code"] == "SYNC_FAILED"
+    assert failed["summary"]["sync_error"] == "sync failed"
+    assert "sentinel-sync-secret" not in str(failed)
+
+    with psycopg.connect(api_db) as connection:
+        connection.execute(
+            "UPDATE sync_state SET last_attempt_at = %s, last_attempt_status = 'success', "
+            "last_attempt_error = NULL WHERE id = 1",
+            ("2026-08-12T10:02:00Z",),
+        )
+        connection.commit()
+
+    success = guest_client.get("/api/dashboard?range=all").json()
+    assert success["summary"]["sync_status"] == "success"
+    assert success["summary"]["sync_last_attempt_at"].startswith("2026-08-12T10:02:00")
+    assert success["summary"]["sync_error"] is None
+
+
 def test_current_state_moves_issue_outcome(client, api_db):
     _seed(api_db)
     import psycopg
@@ -321,7 +369,9 @@ def test_repository_filter_scopes_both_event_panels(client, api_db):
     assert sum(bucket["opened"] for bucket in body["pull_requests"]) == 1
 
 
-def test_dashboard_uses_one_repeatable_read_connection(client, api_db, monkeypatch):
+def test_dashboard_uses_repeatable_read_for_aggregate_and_status_overlay(
+    client, api_db, monkeypatch
+):
     _seed(api_db)
     real_viz_conn = db.viz_conn
     connections = []
@@ -335,7 +385,9 @@ def test_dashboard_uses_one_repeatable_read_connection(client, api_db, monkeypat
     monkeypatch.setattr(db, "viz_conn", tracked_viz_conn)
     response = client.get("/api/dashboard?range=all&fresh=1")
     assert response.status_code == 200
-    assert len(connections) == 1
+    # The aggregate is one repeatable-read snapshot; durable sync status is a
+    # separate uncached read so a cached aggregate cannot hide a later failure.
+    assert len(connections) == 2
 
 
 def test_read_transaction_is_repeatable_read_and_read_only(api_db):

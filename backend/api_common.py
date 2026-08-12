@@ -21,6 +21,10 @@ from fastapi import HTTPException
 from backend import db
 
 log = logging.getLogger("ghpulse.api")
+SYNC_FAILURE_CODE = "SYNC_FAILED"
+SYNC_FAILURE_MESSAGE = "sync failed"
+DATABASE_UNAVAILABLE_CODE = "DATABASE_UNAVAILABLE"
+DATABASE_UNAVAILABLE_MESSAGE = "database unavailable"
 TIMING_ON = os.environ.get("GHPULSE_TIMING", "").lower() not in {
     "", "0", "false", "no",
 }

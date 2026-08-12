@@ -215,6 +215,12 @@ def test_guest_can_load_static_shell_with_safe_session_injection_and_hashes(
     assert "unsafe-eval" in response.headers["content-security-policy"]
 
 
+def test_service_allows_unbounded_paginated_ingest_shutdown():
+    service = (ROOT / "examples" / "ghpulse.service").read_text(encoding="utf-8")
+    assert "--timeout-graceful-shutdown" not in service
+    assert "TimeoutStopSec=infinity" in service
+
+
 def test_admin_ingest_requires_constant_time_token_and_same_origin(
     isolated_app, monkeypatch
 ):

@@ -18,6 +18,8 @@ from backend.api_common import (
     dense_bucket_bounds,
     read_transaction,
     response_bucket,
+    SYNC_FAILURE_CODE,
+    SYNC_FAILURE_MESSAGE,
     utc_now,
 )
 from backend.cache import cache_response
@@ -228,8 +230,8 @@ def _last_ingest(connection) -> str | None:
     return _iso(row[0]) if row else None
 
 
-def _sync_summary(connection) -> dict:
-    """Expose operational sync state without exposing raw rows or secrets."""
+def _sync_status(connection) -> dict:
+    """Read the durable attempt marker for an uncached response overlay."""
     row = connection.execute(
         """
         SELECT last_attempt_at, last_attempt_status, last_attempt_error
@@ -238,12 +240,28 @@ def _sync_summary(connection) -> dict:
         """
     ).fetchone()
     if not row:
-        return {"status": None, "last_attempt_at": None, "error": None}
+        return {
+            "sync_status": None,
+            "sync_last_attempt_at": None,
+            "sync_error_code": None,
+            "sync_error": None,
+        }
+    failed = row[1] == "failure" or bool(row[2])
     return {
-        "status": row[1],
-        "last_attempt_at": _iso(row[0]),
-        "error": row[2],
+        "sync_status": row[1],
+        "sync_last_attempt_at": _iso(row[0]),
+        "sync_error_code": SYNC_FAILURE_CODE if failed else None,
+        "sync_error": SYNC_FAILURE_MESSAGE if failed else None,
     }
+
+
+def _overlay_sync_status(body: dict) -> dict:
+    """Attach current operational status without mutating a cached body."""
+    with read_transaction() as connection:
+        status = _sync_status(connection)
+    response = dict(body)
+    response["summary"] = {**(body.get("summary") or {}), **status}
+    return response
 
 
 def _fold_buckets(
@@ -294,7 +312,6 @@ def _dashboard_build(connection, window: RangeWindow, repository: str | None) ->
         repository_ids = _event_repository_ids(connection, window, repository)
         repositories = _repository_rows(connection, repository_ids)
         last_ingest = _last_ingest(connection)
-        sync = _sync_summary(connection)
 
     phases.done(
         issues=len(issue_buckets),
@@ -319,9 +336,6 @@ def _dashboard_build(connection, window: RangeWindow, repository: str | None) ->
                 "currently_open": pr_open,
             },
             "last_ingest": last_ingest,
-            "sync_status": sync["status"],
-            "sync_last_attempt_at": sync["last_attempt_at"],
-            "sync_error": sync["error"],
         },
         "repositories": repositories,
         "generated_at": _iso(started),
@@ -359,9 +373,10 @@ def dashboard_route(
 ) -> dict:
     """Serve the current-state dashboard for the middleware-resolved viewer."""
     visibility = "guest" if bool(getattr(request.state, "is_guest", False)) else "authenticated"
-    return dashboard(
+    body = dashboard(
         rng=rng,
         repository=repository,
         visibility=visibility,
         fresh=fresh,
     )
+    return _overlay_sync_status(body)
