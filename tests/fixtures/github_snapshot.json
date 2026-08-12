@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-11T12:00:00Z",
+  "account": {
+    "login": "octocat"
+  },
+  "repositories": [
+    {
+      "id": "R_external",
+      "nameWithOwner": "external/project",
+      "url": "https://github.com/external/project",
+      "isPrivate": false,
+      "owner": {
+        "login": "external"
+      }
+    }
+  ],
+  "issues": [
+    {
+      "node_id": "I_open",
+      "repository_id": "R_external",
+      "repository": "external/project",
+      "owner": "external",
+      "repository_url": "https://github.com/external/project",
+      "is_private": false,
+      "number": 1,
+      "url": "https://github.com/external/project/issues/1",
+      "created_at": "2026-08-01T10:00:00Z",
+      "updated_at": "2026-08-02T10:00:00Z",
+      "closed_at": null,
+      "state": "OPEN",
+      "state_reason": null
+    },
+    {
+      "node_id": "I_completed",
+      "repository_id": "R_external",
+      "repository": "external/project",
+      "owner": "external",
+      "repository_url": "https://github.com/external/project",
+      "is_private": false,
+      "number": 2,
+      "url": "https://github.com/external/project/issues/2",
+      "created_at": "2026-08-03T10:00:00Z",
+      "updated_at": "2026-08-04T10:00:00Z",
+      "closed_at": "2026-08-04T10:00:00Z",
+      "state": "CLOSED",
+      "state_reason": "COMPLETED"
+    }
+  ],
+  "pull_requests": [
+    {
+      "node_id": "PR_merged",
+      "repository_id": "R_external",
+      "repository": "external/project",
+      "owner": "external",
+      "repository_url": "https://github.com/external/project",
+      "is_private": false,
+      "number": 3,
+      "url": "https://github.com/external/project/pull/3",
+      "created_at": "2026-08-05T10:00:00Z",
+      "updated_at": "2026-08-06T10:00:00Z",
+      "closed_at": "2026-08-06T10:00:00Z",
+      "state": "MERGED",
+      "merged_at": "2026-08-06T10:00:00Z",
+      "merged": true
+    }
+  ]
+}

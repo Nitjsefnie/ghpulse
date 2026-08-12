@@ -1,0 +1,3 @@
+[submodule "vendor/gh-widgets"]
+	path = vendor/gh-widgets
+	url = https://github.com/Nitjsefnie/gh-widgets.git
