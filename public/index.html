@@ -21,7 +21,8 @@
 <script>window.BACKEND_URL = window.BACKEND_URL || '';</script>
 <script>window.IS_GUEST = window.IS_GUEST || false;</script>
 
-<!-- Dashboard components are added by the later application tasks. -->
+<!-- Chart helpers must be evaluated before the application shell. Both files
+     are JSX and are compiled in-browser by the Babel script above. -->
 <script type="text/babel" src="/src/dashboard-charts.jsx"></script>
 <script type="text/babel" src="/src/app.jsx"></script>
 <script type="text/babel">

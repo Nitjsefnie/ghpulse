@@ -646,3 +646,139 @@ button:focus-visible, .navbtn:focus-visible, .chip:focus-visible, .fchip:focus-v
     max-height: 45vh;
   }
 }
+
+/* ghpulse dashboard controls and lifecycle states. These reuse Claudit's
+   existing spacing, type, borders, and panel tokens; they only add the
+   repository-specific controls and the two-panel empty/loading affordances. */
+.dashboard-filterbar {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 22px;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+}
+.range-controls,
+.repository-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.filter-label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.repository-control select {
+  min-width: 240px;
+  max-width: min(440px, 60vw);
+  background: var(--bg);
+  color: var(--fg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 5px 9px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.repository-control select:focus {
+  outline: 0;
+  border-color: var(--accent);
+}
+.stream-indicator {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.stream-indicator.connected { color: var(--accent); }
+.stream-indicator.reconnecting,
+.stream-indicator.connecting { color: var(--warn); }
+.ghpulse-panel-grid > .panel-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 340px;
+}
+.ghpulse-panel-grid > .panel-shell > div:first-child { height: 100%; }
+.ghpulse-summary .stat-value { overflow: hidden; text-overflow: ellipsis; }
+.panel-empty {
+  position: absolute;
+  left: 50%;
+  bottom: 54px;
+  transform: translateX(-50%);
+  max-width: calc(100% - 36px);
+  padding: 6px 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.loading-overlay {
+  position: fixed;
+  top: 52px;
+  right: 18px;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  color: var(--fg-2);
+  background: var(--panel);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-card);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.loading-spinner {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--muted-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: ghpulse-spin 700ms linear infinite;
+}
+@keyframes ghpulse-spin { to { transform: rotate(360deg); } }
+.dashboard-alert {
+  padding: 9px 12px;
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--err) 42%, var(--border));
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.dashboard-alert-stale { color: var(--warn); }
+.state-card {
+  padding: 36px 24px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-md);
+  text-align: center;
+}
+.state-card-title {
+  color: var(--fg-2);
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.06em;
+}
+.state-card-detail { margin-top: 7px; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 700px) {
+  .dashboard-filterbar { align-items: stretch; }
+  .range-controls, .repository-control { width: 100%; }
+  .repository-control select { flex: 1; max-width: none; min-width: 0; }
+  .panel-empty { white-space: normal; }
+  .loading-overlay { right: 10px; }
+}
