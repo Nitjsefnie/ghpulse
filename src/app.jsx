@@ -351,9 +351,9 @@ function App() {
     error: '',
   });
   const [streamState, setStreamState] = useState('connecting');
-  const [repositoryFresh, setRepositoryFresh] = useState(false);
+  const [repositoryRefreshNonce, setRepositoryRefreshNonce] = useState(0);
   const repositoryRequestId = useRef(0);
-  const skipRepositoryRefresh = useRef(false);
+  const repositoryRefreshHandled = useRef(0);
 
   const backendFetch = useCallback(async (path, options = {}) => {
     const response = await fetch(apiPath(path), {
@@ -394,11 +394,7 @@ function App() {
     const requestController = typeof AbortController === 'function'
       ? new AbortController() : {signal: undefined, abort() {}};
     setRepositoryError('');
-    const requestedFresh = repositoryFresh;
-    if (!requestedFresh && skipRepositoryRefresh.current) {
-      skipRepositoryRefresh.current = false;
-      return () => { alive = false; };
-    }
+    const requestedFresh = repositoryRefreshNonce !== repositoryRefreshHandled.current;
     backendFetch(buildRepositoriesQuery(activeRange, {fresh: requestedFresh}), {
       signal: requestController.signal,
     })
@@ -407,10 +403,7 @@ function App() {
         const nextRepositories = Array.isArray(body.repositories) ? body.repositories : [];
         setRepositories(nextRepositories);
         setRepositoryHistory(previous => mergeRepositoryHistory(previous, nextRepositories));
-        if (requestedFresh) {
-          skipRepositoryRefresh.current = true;
-          setRepositoryFresh(false);
-        }
+        if (requestedFresh) repositoryRefreshHandled.current = repositoryRefreshNonce;
       })
       .catch(err => {
         if (!alive || currentRequestId !== repositoryRequestId.current
@@ -421,7 +414,7 @@ function App() {
       alive = false;
       requestController.abort();
     };
-  }, [activeRange, repositoryFresh, backendFetch]);
+  }, [activeRange, repositoryRefreshNonce, backendFetch]);
 
   const requestCoordinator = useMemo(() => createDashboardRequestCoordinator({
     fetchJson: (selection, signal, fresh) => backendFetch(
@@ -434,7 +427,7 @@ function App() {
       }
     },
     onStreamStateChange: setStreamState,
-    onIngest: () => setRepositoryFresh(true),
+    onIngest: () => setRepositoryRefreshNonce(value => value + 1),
     onIngestFailure: () => {},
     eventSourceFactory: () => new EventSource(apiPath('/api/events'), {withCredentials: true}),
   }), [backendFetch]);
