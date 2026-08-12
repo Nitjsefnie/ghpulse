@@ -215,12 +215,21 @@ def _health_payload() -> dict:
     }
 
 
+async def _cancel_tasks(tasks) -> None:
+    """Cancel and drain tasks created for one SSE wait cycle."""
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def _event_stream(request: Request):
     """Stream ingest completion events and heartbeat comments to the browser."""
 
     async def generator():
         queue = events.subscribe()
         shutdown = events.shutdown_event()
+        waiters = []
         try:
             yield ": connected\n\n"
             while True:
@@ -236,8 +245,8 @@ async def _event_stream(request: Request):
                     timeout=15,
                     return_when=asyncio.FIRST_COMPLETED,
                 )
-                for task in pending:
-                    task.cancel()
+                await _cancel_tasks(pending)
+                waiters = []
                 if not done:
                     yield ": ping\n\n"
                     continue
@@ -250,6 +259,7 @@ async def _event_stream(request: Request):
                     except asyncio.CancelledError:
                         break
         finally:
+            await _cancel_tasks(waiters)
             events.unsubscribe(queue)
 
     return StreamingResponse(

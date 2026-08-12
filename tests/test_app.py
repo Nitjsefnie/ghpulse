@@ -282,6 +282,39 @@ async def test_sse_route_shutdown_stops_an_active_stream(isolated_app):
     events.clear_loop()
 
 
+@pytest.mark.asyncio
+async def test_sse_route_cancellation_cleans_waiter_tasks(isolated_app):
+    """Client navigation must not leave queue/event waiters on the loop."""
+    _app, app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    from backend import events
+
+    class ConnectedRequest:
+        async def is_disconnected(self):
+            return False
+
+    events.set_loop(asyncio.get_running_loop())
+    response = await app_module._event_stream(ConnectedRequest())
+    stream = response.body_iterator
+    assert await stream.__anext__() == ": connected\n\n"
+
+    read = asyncio.create_task(stream.__anext__())
+    await asyncio.sleep(0)
+    read.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await read
+    await stream.aclose()
+
+    current = asyncio.current_task()
+    leaked = [
+        task for task in asyncio.all_tasks()
+        if task is not current
+        and not task.done()
+        and getattr(task.get_coro(), "__qualname__", "") in {"Queue.get", "Event.wait"}
+    ]
+    assert leaked == []
+    events.clear_loop()
+
+
 def test_served_index_keeps_json_injection_valid_for_quoted_backend_url(
     isolated_app, monkeypatch
 ):
