@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-11T12:00:00Z",
+  "account": {"login": "octocat"},
+  "repositories": [
+    {
+      "id": "R_1",
+      "nameWithOwner": "external/one",
+      "url": "https://github.com/external/one",
+      "isPrivate": false,
+      "owner": {"login": "external"}
+    },
+    {
+      "id": "R_2",
+      "nameWithOwner": "outside/two",
+      "url": "https://github.com/outside/two",
+      "isPrivate": false,
+      "owner": {"login": "outside"}
+    }
+  ],
+  "issues": [
+    {
+      "node_id": "I_1",
+      "repository_id": "R_1",
+      "repository": "external/one",
+      "owner": "external",
+      "repository_url": "https://github.com/external/one",
+      "is_private": false,
+      "number": 1,
+      "url": "https://github.com/external/one/issues/1",
+      "created_at": "2026-08-01T10:00:00Z",
+      "updated_at": "2026-08-04T10:00:00Z",
+      "closed_at": "2026-08-04T10:00:00Z",
+      "state": "CLOSED",
+      "state_reason": "COMPLETED"
+    },
+    {
+      "node_id": "I_2",
+      "repository_id": "R_2",
+      "repository": "outside/two",
+      "owner": "outside",
+      "repository_url": "https://github.com/outside/two",
+      "is_private": false,
+      "number": 2,
+      "url": "https://github.com/outside/two/issues/2",
+      "created_at": "2026-08-02T10:00:00Z",
+      "updated_at": "2026-08-03T10:00:00Z",
+      "closed_at": null,
+      "state": "OPEN",
+      "state_reason": null
+    }
+  ],
+  "pull_requests": [
+    {
+      "node_id": "PR_1",
+      "repository_id": "R_1",
+      "repository": "external/one",
+      "owner": "external",
+      "repository_url": "https://github.com/external/one",
+      "is_private": false,
+      "number": 3,
+      "url": "https://github.com/external/one/pull/3",
+      "created_at": "2026-08-03T10:00:00Z",
+      "updated_at": "2026-08-06T10:00:00Z",
+      "closed_at": "2026-08-06T10:00:00Z",
+      "state": "CLOSED",
+      "merged_at": null,
+      "merged": false
+    },
+    {
+      "node_id": "PR_2",
+      "repository_id": "R_2",
+      "repository": "outside/two",
+      "owner": "outside",
+      "repository_url": "https://github.com/outside/two",
+      "is_private": false,
+      "number": 4,
+      "url": "https://github.com/outside/two/pull/4",
+      "created_at": "2026-08-05T10:00:00Z",
+      "updated_at": "2026-08-05T10:00:00Z",
+      "closed_at": null,
+      "state": "OPEN",
+      "merged_at": null,
+      "merged": false
+    }
+  ]
+}

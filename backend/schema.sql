@@ -63,9 +63,10 @@ CREATE INDEX IF NOT EXISTS pull_requests_merged_at_idx ON pull_requests (merged_
 CREATE TABLE IF NOT EXISTS ingest_runs (
   id                         BIGSERIAL PRIMARY KEY,
   trigger                    TEXT NOT NULL,
-  full_sync                  BOOLEAN NOT NULL,
   started_at                 TIMESTAMPTZ NOT NULL,
   finished_at                TIMESTAMPTZ,
+  committed_at               TIMESTAMPTZ,
+  source_snapshot_at         TIMESTAMPTZ,
   repositories_fetched       INTEGER NOT NULL DEFAULT 0,
   issues_fetched             INTEGER NOT NULL DEFAULT 0,
   pull_requests_fetched      INTEGER NOT NULL DEFAULT 0,
@@ -75,14 +76,29 @@ CREATE TABLE IF NOT EXISTS ingest_runs (
   repositories_deleted       INTEGER NOT NULL DEFAULT 0,
   issues_deleted             INTEGER NOT NULL DEFAULT 0,
   pull_requests_deleted      INTEGER NOT NULL DEFAULT 0,
+  data_changed               BOOLEAN NOT NULL DEFAULT FALSE,
   error                      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (
   id                       SMALLINT PRIMARY KEY CHECK (id = 1),
-  last_successful_high_water TIMESTAMPTZ,
+  last_committed_at        TIMESTAMPTZ,
+  last_source_snapshot_at  TIMESTAMPTZ,
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Existing deployments may still have the pre-current-state columns.  The
+-- current ingest never reads or writes those obsolete full-sync/high-water
+-- fields (legacy names: full_sync and last_successful_high_water); these
+-- additive migrations let an already-created database acquire
+-- the authoritative commit/source timestamps without a destructive rewrite.
+ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS committed_at TIMESTAMPTZ;
+ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS source_snapshot_at TIMESTAMPTZ;
+ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS data_changed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_committed_at TIMESTAMPTZ;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_source_snapshot_at TIMESTAMPTZ;
+ALTER TABLE ingest_runs DROP COLUMN IF EXISTS full_sync;
+ALTER TABLE sync_state DROP COLUMN IF EXISTS last_successful_high_water;
 
 INSERT INTO sync_state (id)
 VALUES (1)
