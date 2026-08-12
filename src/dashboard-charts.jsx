@@ -155,7 +155,6 @@ function validateTimeSeriesInputs(range, binMs) {
 function normalizedDenseIntervals(events, series, range) {
   const keys = series.map(item => item.key);
   const intervals = [];
-  let previousStart = null;
   let previousEnd = null;
 
   events.forEach((event, index) => {
@@ -170,27 +169,30 @@ function normalizedDenseIntervals(events, series, range) {
     if (start < range.start || end > range.end) {
       throw new TypeError(`Dense interval at index ${index} is outside the selected range`);
     }
-    if (previousStart !== null && start < previousStart) {
-      throw new TypeError('Dense intervals must be ordered by start timestamp');
+    if (index === 0 && start !== range.start) {
+      throw new TypeError('Dense intervals must start at the selected range start');
     }
-    if (previousEnd !== null && start < previousEnd) {
-      throw new TypeError(`Overlapping dense interval at index ${index}`);
+    if (previousEnd !== null && start !== previousEnd) {
+      throw new TypeError(`Dense interval at index ${index} does not continue the previous interval`);
     }
 
     const values = Object.fromEntries(keys.map(key => [key, eventAmount(event[key], 0)]));
     const total = keys.reduce((sum, key) => sum + values[key], 0);
     intervals.push({start, end, values, total});
-    previousStart = start;
     previousEnd = end;
   });
+  if (previousEnd !== null && previousEnd !== range.end) {
+    throw new TypeError('Dense intervals must end at the selected range end');
+  }
   return intervals;
 }
 
 // Normalize both useful browser inputs without making the chart depend on
 // the API layer.  A discrete event is {ts, key, value?}; a dense API bucket
 // is {start, end, opened, completed, not_planned} and is handled separately
-// below so the API's clipped boundaries survive intact.  Point entries are
-// never the caller's objects and are sorted deterministically.
+// below so the API's clipped boundaries survive intact and the supplied rows
+// can be validated as complete contiguous coverage.  Point entries are never
+// the caller's objects and are sorted deterministically.
 function normalizedSeriesEvents(events, series, range) {
   const keys = new Set(series.map(item => item.key));
   const normalized = [];
@@ -296,15 +298,6 @@ function buildStackedBarSegments(
   });
 }
 
-function tooltipFmt(value) {
-  const number = Number(value) || 0;
-  const abs = Math.abs(number);
-  if (abs >= 1e9) return (number / 1e9).toFixed(2).replace(/\.?0+$/, '') + 'B';
-  if (abs >= 1e6) return (number / 1e6).toFixed(2).replace(/\.?0+$/, '') + 'M';
-  if (abs >= 1e3) return (number / 1e3).toFixed(1).replace(/\.?0+$/, '') + 'K';
-  return String(Math.round(number));
-}
-
 function buildTooltipLines(bin, cumulative, series, binIdx, totals) {
   const safeSeries = Array.isArray(series) ? series : [];
   const safeCumulative = cumulative || {};
@@ -315,8 +308,8 @@ function buildTooltipLines(bin, cumulative, series, binIdx, totals) {
     const period = eventAmount(bin && bin.values ? bin.values[item.key] : 0, 0);
     const points = Array.isArray(safeCumulative[item.key]) ? safeCumulative[item.key] : [];
     const point = points[index + 1];
-    lines.push([`${item.label} period`, tooltipFmt(period), item.color]);
-    lines.push([`${item.label} cumulative`, tooltipFmt(point ? point.v : 0), item.color]);
+    lines.push([`${item.label} period`, humanFmt(period), item.color]);
+    lines.push([`${item.label} cumulative`, humanFmt(point ? point.v : 0), item.color]);
   });
   lines.push(['interval events', String(bin && Number.isFinite(bin.total) ? bin.total : 0)]);
   safeSeries.forEach(item => {

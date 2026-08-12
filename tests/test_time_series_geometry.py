@@ -46,10 +46,15 @@ def _probe(events: list[dict], range_: dict, bin_ms: int) -> dict:
     script = f"""
       const fs = require('fs');
       const src = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const formatterStart = src.indexOf('function humanFmt');
+      const formatterEnd = src.indexOf('function fmtDate', formatterStart);
       const start = src.indexOf('function boundedTimeIntervals');
       const end = src.indexOf('function Tooltip', start);
-      if (start < 0 || end < 0 || end <= start) throw new Error('geometry block missing');
-      eval(src.slice(start, end) + '\\nwindow.__chart = {{' +
+      if (formatterStart < 0 || formatterEnd < 0 || start < 0 || end < 0 || end <= start) {{
+        throw new Error('geometry block missing');
+      }}
+      eval(src.slice(formatterStart, formatterEnd) + '\\n' + src.slice(start, end) +
+        '\\nwindow.__chart = {{' +
         'buildStackedTimeSeriesData, timeX, timeBarRect, timeBinIndexAtX,' +
         'boundedTimeIntervals, buildStackedBarSegments, buildTooltipLines,' +
         'layoutLegend' +
@@ -230,6 +235,31 @@ def test_dense_api_intervals_are_preserved_without_rebinning():
     assert result["sourceUnchanged"]
 
 
+def test_tooltip_lines_are_complete_and_stably_ordered():
+    result = _probe(
+        [
+            {"start": 100, "end": 120, "opened": 2, "completed": 1, "not_planned": 0},
+            {"start": 120, "end": 240, "opened": 0, "completed": 2, "not_planned": 0},
+            {"start": 240, "end": 360, "opened": 1, "completed": 0, "not_planned": 3},
+            {"start": 360, "end": 400, "opened": 0, "completed": 0, "not_planned": 1},
+        ],
+        {"start": 100, "end": 400},
+        120,
+    )
+    assert result["tooltip"] == [
+        ["Opened period", "2", "#00d4aa"],
+        ["Opened cumulative", "2", "#00d4aa"],
+        ["Completed period", "1", "#ff9c5a"],
+        ["Completed cumulative", "1", "#ff9c5a"],
+        ["Not planned period", "0", "#a98bff"],
+        ["Not planned cumulative", "0", "#a98bff"],
+        ["interval events", "3"],
+        ["Opened % selected-range total", "66.67%", "#00d4aa"],
+        ["Completed % selected-range total", "33.33%", "#ff9c5a"],
+        ["Not planned % selected-range total", "0.00%", "#a98bff"],
+    ]
+
+
 def test_pre_range_malformed_and_unknown_point_events_are_ignored_without_mutation():
     events = [
         {"ts": -1, "key": "opened"},
@@ -265,6 +295,37 @@ def test_overlapping_and_out_of_range_dense_intervals_fail_deterministically():
     """
     outcomes = _node("global.window = {};\n" + script)
     assert all(value.startswith("TypeError:") for value in outcomes)
+
+
+def test_dense_intervals_cover_the_selected_range_without_gaps():
+    script = r"""
+      const fs = require('fs');
+      const src = fs.readFileSync('src/dashboard-charts.jsx', 'utf8');
+      const start = src.indexOf('function boundedTimeIntervals');
+      const end = src.indexOf('function Tooltip', start);
+      eval(src.slice(start, end) + '\nwindow.__chart = {buildStackedTimeSeriesData};');
+      const series = [{key: 'opened', label: 'Opened', color: '#00d4aa'}];
+      const range = {start: 100, end: 400};
+      const invalid = [
+        [{start: 120, end: 240, opened: 1}, {start: 240, end: 400, opened: 1}],
+        [{start: 100, end: 240, opened: 1}, {start: 240, end: 360, opened: 1}],
+        [{start: 100, end: 200, opened: 1}, {start: 220, end: 400, opened: 1}],
+      ];
+      const outcomes = invalid.map(rows => {
+        try { window.__chart.buildStackedTimeSeriesData(rows, series, range, 10); return 'accepted'; }
+        catch (error) { return error.name + ':' + error.message; }
+      });
+      const valid = window.__chart.buildStackedTimeSeriesData([
+        {start: 100, end: 200, opened: 1},
+        {start: 200, end: 400, opened: 2},
+      ], series, range, 10);
+      console.log(JSON.stringify({outcomes, bins: valid.bins}));
+    """
+    result = _node("global.window = {};\n" + script)
+    assert all(value.startswith("TypeError:") for value in result["outcomes"])
+    assert [(row["start"], row["end"]) for row in result["bins"]] == [
+        (100, 200), (200, 400)
+    ]
 
 
 def test_stacked_segments_are_bottom_up_and_plot_bounded():

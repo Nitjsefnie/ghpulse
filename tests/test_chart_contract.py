@@ -87,3 +87,10 @@ def test_pure_contract_helpers_are_exposed_for_executable_validation():
     assert "window.buildStackedBarSegments" in src
     assert "window.buildTooltipLines" in src
     assert "window.layoutLegend" in src
+
+
+def test_tooltip_helper_uses_the_production_value_formatter():
+    src = CHARTS_JSX.read_text(encoding="utf-8")
+    helper = src[src.index("function buildTooltipLines") : src.index("function wrapLegendLabel")]
+    assert "humanFmt(" in helper
+    assert "tooltipFmt" not in src
