@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ghpulse — Final Integration Verification</title>
+<style>
+:root { --bg:#1b1a17; --panel:#252420; --ink:#f5f3ec; --muted:#8f8d82;
+  --line:#3a3833; --accent:#d97757; --ok:#8fa56e; --warn:#e08b7f;
+  --mono:ui-monospace,'SF Mono',Menlo,monospace; --sans:system-ui,-apple-system,sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; padding:48px 24px 96px; background:var(--bg); color:var(--ink);
+  font:15px/1.6 var(--sans); }
+.page { max-width:960px; margin:auto; }
+header { border-bottom:1px solid var(--line); padding-bottom:24px; margin-bottom:32px; }
+h1,h2 { font-weight:500; letter-spacing:-.01em; }
+h1 { font-size:38px; margin:0 0 8px; }
+h2 { font-size:24px; margin:36px 0 8px; }
+.meta,.mono { font-family:var(--mono); font-size:12px; color:var(--muted); }
+.status { display:inline-block; padding:5px 10px; border:1px solid var(--warn);
+  color:var(--warn); border-radius:999px; font:11px var(--mono); text-transform:uppercase; }
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px 22px; }
+ul { padding-left:22px; }
+li { margin:5px 0; }
+code { font-family:var(--mono); font-size:.9em; color:#cfccc2; }
+table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); }
+th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+th { color:var(--muted); font:11px var(--mono); text-transform:uppercase; }
+tr:last-child td { border-bottom:0; }
+.ok { color:var(--ok); }
+.warn { color:var(--warn); }
+footer { margin-top:48px; border-top:1px solid var(--line); padding-top:16px; color:var(--muted); font:12px var(--mono); }
+</style>
+</head>
+<body>
+<main class="page">
+<header>
+  <h1>ghpulse — Final Integration Verification</h1>
+  <div class="meta">2026-08-12 · feature/ghpulse-foundation · evidence HEAD 4716606</div>
+  <p><span class="status">DONE_WITH_CONCERNS</span></p>
+  <p>All local gates are verified. The sole remaining concern is external:
+  the exact gh-widgets gitlink is not yet published to its configured remote.</p>
+</header>
+
+<section>
+<h2>Repository and dependency</h2>
+<div class="card"><ul>
+  <li>Base: <code>ca70d3107436cb82d3cda643c340d5296bc72cd6</code>.</li>
+  <li>Worktree clean; <code>git submodule update --init --recursive</code> exited 0.</li>
+  <li>Exact gitlink: <code>6f7a02c8e1777f17898879be3c31b46d77e61d63</code>.</li>
+  <li>URL: <code>https://github.com/Nitjsefnie/gh-widgets.git</code>.</li>
+  <li><code>git ls-remote</code> for the exact object exited 2 with no match;
+    the remote <code>main</code> ref is reachable. No fallback or push was used.</li>
+</ul></div>
+</section>
+
+<section>
+<h2>Verification gates</h2>
+<table><thead><tr><th>Gate</th><th>Evidence</th></tr></thead><tbody>
+<tr><td>ghpulse pytest</td><td class="ok">134 passed in 39.87s; real PostgreSQL DSNs; zero skips; browser smoke enabled.</td></tr>
+<tr><td>Quality</td><td class="ok">Pyright 0 errors; Pylint 10.00/10.00; pycodestyle and Ruff exit 0.</td></tr>
+<tr><td>Frontend</td><td class="ok">Bun JSX/loading order passed; 19 app/chart contract tests passed.</td></tr>
+<tr><td>Browser</td><td class="ok">Strict Uvicorn/Chromium smoke: 14 passed, no console/page/request/CSP errors.</td></tr>
+<tr><td>gh-widgets</td><td class="ok">Pinned checkout: 226 unittest tests passed.</td></tr>
+<tr><td>Control chars</td><td class="ok">55 tracked files clean.</td></tr>
+</tbody></table>
+</section>
+
+<section>
+<h2>Current-state proof</h2>
+<div class="card"><p>Initial fixture totals were issues opened 2/completed 1/not planned 0 and
+PRs opened 2/merged 0/closed unmerged 1. After the changed complete snapshot,
+totals were issues opened 1/completed 0/not planned 1 and PRs opened 1/merged
+1/closed unmerged 0. Old current outcomes disappeared and new current outcomes
+appeared.</p>
+<p>Chart cumulative lines were zero-anchored at the selected range start and
+terminated at its end for 24h, 7d, 30d, 90d, 1y, and all. Guest and authenticated
+middleware/API/filter requests passed. Both identities rendered exactly two
+panels under production CSP.</p></div>
+</section>
+
+<section>
+<h2>Defect fixed during verification</h2>
+<div class="card"><p>Cancellation of <code>/api/events</code> left <code>Queue.get</code> and
+<code>Event.wait</code> tasks pending. A focused regression failed before the fix
+and passed after commit <code>619ea1f</code>, which cancels and gathers waiters
+both after each wait cycle and in generator teardown. Only
+<code>backend/app.py</code> and <code>tests/test_app.py</code> changed.</p></div>
+</section>
+
+<section>
+<h2>Inspection</h2>
+<div class="card"><p>README, AGENTS, CONTRIBUTING, CI, and the one systemd service agree on
+one account, public external-only current-state data, exactly two panels,
+complete startup/hourly ingest, and no weekly/resync/incremental/export mode.
+The token is absent from served HTML and API payloads. History audit:
+20 commits, 20 co-authored, 0 missing (19 implementation commits plus this evidence commit); each has exactly one
+<code>Co-Authored-By: GPT-5.6 Luna &lt;noreply@openai.com&gt;</code> trailer.</p></div>
+</section>
+<footer>Evidence recorded from the local checkout; neither repository was pushed.</footer>
+</main>
+</body>
+</html>
