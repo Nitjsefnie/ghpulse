@@ -150,3 +150,190 @@ def test_pure_app_contract_normalizes_api_payload_and_query_state():
     assert result["issueKeys"] == ["opened", "completed", "not_planned"]
     assert result["prKeys"] == ["opened", "merged", "closed_unmerged"]
     assert result["stale"]["stale"] is True
+
+
+def _run_app_contract_script(body: str) -> dict:
+    """Run a Node probe against the real pure app contract block."""
+    script = f"""
+      const fs = require('fs');
+      global.window = {{}};
+      const src = fs.readFileSync('src/app.jsx', 'utf8');
+      const start = src.indexOf('// --- pure app contracts ---');
+      const end = src.indexOf('// --- React app ---', start);
+      if (start < 0 || end <= start) throw new Error('pure app contract block missing');
+      eval(src.slice(start, end));
+      (async () => {{
+        {body}
+      }})().catch(error => {{ console.error(error.stack || error); process.exit(1); }});
+    """
+    proc = subprocess.run(
+        ["node", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_dashboard_request_state_keeps_selection_provenance_and_drops_old_data():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_contract_script(
+        """
+        const requests = [];
+        const states = [];
+        const coordinator = window.ghpulseAppContract.createDashboardRequestCoordinator({
+          fetchJson: (selection, signal) => new Promise((resolve, reject) =>
+            requests.push({selection, signal, resolve, reject})),
+          onStateChange: state => states.push({
+            phase: state.phase,
+            selection: state.selection,
+            dataSelection: state.data && state.data.selection,
+            error: state.error,
+          }),
+        });
+        const payload = (range, repository, start, end) => ({
+          range, repository, bucket_s: 3600, start, end,
+          issues: [{start, end, opened: 1, completed: 0, not_planned: 0}],
+          pull_requests: [], summary: {}, repositories: [],
+        });
+        coordinator.load({range: '7d', repository: 'R_1'});
+        requests[0].resolve(payload('7d', 'R_1', '2026-08-01T00:00:00Z', '2026-08-08T00:00:00Z'));
+        await Promise.resolve(); await Promise.resolve();
+        coordinator.load({range: '30d', repository: 'R_2'});
+        const cleared = states[states.length - 1];
+        requests[1].reject(new Error('new selection failed'));
+        await Promise.resolve(); await Promise.resolve();
+        const failed = states[states.length - 1];
+        console.log(JSON.stringify({cleared, failed, requestCount: requests.length}));
+        """,
+    )
+    assert result["requestCount"] == 2
+    assert result["cleared"]["phase"] == "loading"
+    assert result["cleared"]["selection"] == {"range": "30d", "repository": "R_2"}
+    assert result["cleared"]["dataSelection"] is None
+    assert result["failed"]["phase"] == "error"
+    assert result["failed"]["selection"] == {"range": "30d", "repository": "R_2"}
+    assert result["failed"]["dataSelection"] is None
+
+
+def test_dashboard_request_state_suppresses_out_of_order_results_and_accepts_dense_payload():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_contract_script(
+        """
+        const requests = [];
+        const states = [];
+        const coordinator = window.ghpulseAppContract.createDashboardRequestCoordinator({
+          fetchJson: (selection, signal) => new Promise((resolve, reject) =>
+            requests.push({selection, signal, resolve, reject})),
+          onStateChange: state => states.push(state),
+        });
+        const dense = {
+          range: '7d', repository: 'R_2', bucket_s: 3600,
+          start: '2026-08-01T00:00:00Z', end: '2026-08-08T00:00:00Z',
+          issues: [
+            {start: '2026-08-01T00:00:00Z', end: '2026-08-02T00:00:00Z', opened: 2, completed: 1, not_planned: 0},
+            {start: '2026-08-02T00:00:00Z', end: '2026-08-08T00:00:00Z', opened: 0, completed: 0, not_planned: 1},
+          ], pull_requests: [], summary: {}, repositories: [],
+        };
+        coordinator.load({range: '7d', repository: 'R_1'});
+        coordinator.load({range: '7d', repository: 'R_2'});
+        requests[0].resolve({range: '7d', repository: 'R_1', start: dense.start, end: dense.end,
+          bucket_s: 3600, issues: [], pull_requests: [], summary: {}, repositories: []});
+        requests[1].resolve(dense);
+        await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+        const finalState = states[states.length - 1];
+        const view = window.ghpulseAppContract.dashboardToViewModel(finalState.data.body);
+        console.log(JSON.stringify({
+          phase: finalState.phase, selection: finalState.data.selection,
+          first: view.issues.events[0], last: view.issues.events[1],
+          requestCount: requests.length,
+        }));
+        """,
+    )
+    assert result["requestCount"] == 2
+    assert result["phase"] == "ready"
+    assert result["selection"] == {"range": "7d", "repository": "R_2"}
+    assert result["first"]["start"] == 1785542400000
+    assert result["last"]["end"] == 1786147200000
+    assert result["last"]["not_planned"] == 1
+
+
+def test_repository_options_preserve_disappeared_or_deep_linked_selection():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_contract_script(
+        """
+        const history = {
+          R_1: {node_id: 'R_1', name_with_owner: 'external/one', url: 'https://example.test/one'},
+        };
+        const disappeared = window.ghpulseAppContract.repositoryOptionsForSelection(
+          [{node_id: 'R_2', name_with_owner: 'external/two'}], 'R_1', history);
+        const deepLinked = window.ghpulseAppContract.repositoryOptionsForSelection(
+          [], 'R_DEEP', {});
+        console.log(JSON.stringify({disappeared, deepLinked}));
+        """,
+    )
+    assert result["disappeared"][-1] == {
+        "node_id": "R_1",
+        "name_with_owner": "external/one · unavailable in selected range",
+        "url": "https://example.test/one",
+        "unavailable": True,
+    }
+    assert result["deepLinked"] == [{
+        "node_id": "R_DEEP",
+        "name_with_owner": "R_DEEP · unavailable in selected range",
+        "unavailable": True,
+    }]
+
+
+def test_sse_refetches_current_selection_reconnects_and_cleans_up():
+    if shutil.which("node") is None:
+        pytest.skip("node not available for the executable app contract")
+    result = _run_app_contract_script(
+        """
+        class MockSource {
+          constructor() { this.listeners = {}; this.closed = false; }
+          addEventListener(name, handler) { (this.listeners[name] ||= new Set()).add(handler); }
+          removeEventListener(name, handler) { this.listeners[name]?.delete(handler); }
+          emit(name) { for (const handler of this.listeners[name] || []) handler(); }
+          close() { this.closed = true; }
+        }
+        const requests = [];
+        const streamStates = [];
+        let source;
+        const coordinator = window.ghpulseAppContract.createDashboardRequestCoordinator({
+          fetchJson: (selection, signal) => new Promise((resolve, reject) =>
+            requests.push({selection, signal, resolve, reject})),
+          onStateChange: () => {},
+          onStreamStateChange: state => streamStates.push(state),
+          eventSourceFactory: () => (source = new MockSource()),
+        });
+        coordinator.connect();
+        coordinator.load({range: '30d', repository: 'R_1'});
+        requests[0].resolve({range: '30d', repository: 'R_1', bucket_s: 3600,
+          start: '2026-08-01T00:00:00Z', end: '2026-08-02T00:00:00Z',
+          issues: [], pull_requests: [], summary: {}, repositories: []});
+        await Promise.resolve(); await Promise.resolve();
+        source.emit('open'); source.emit('error'); source.emit('ingest_done');
+        const refetched = requests.length;
+        requests[1].resolve({range: '30d', repository: 'R_1', bucket_s: 3600,
+          start: '2026-08-01T00:00:00Z', end: '2026-08-02T00:00:00Z',
+          issues: [], pull_requests: [], summary: {}, repositories: []});
+        await Promise.resolve(); await Promise.resolve();
+        coordinator.dispose();
+        source.emit('ingest_done');
+        console.log(JSON.stringify({
+          refetched, afterDispose: requests.length, closed: source.closed,
+          streamStates,
+        }));
+        """,
+    )
+    assert result["refetched"] == 2
+    assert result["afterDispose"] == 2
+    assert result["closed"] is True
+    assert result["streamStates"] == ["connected", "reconnecting", "connected"]
