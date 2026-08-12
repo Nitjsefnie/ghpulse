@@ -79,3 +79,10 @@ def test_invalidate_keeps_entries_servable():
     value, is_stale = entry
     assert value == {"v": 1}   # still servable, unlike clear()
     assert is_stale is True
+
+
+def test_refresh_workers_can_be_started_and_drained_without_accepting_late_work():
+    cache_mod.start_refresh_workers()
+    cache_mod.stop_refresh_workers()
+    assert cache_mod.submit_refresh(lambda: None) is False
+    cache_mod.start_refresh_workers()

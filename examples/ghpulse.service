@@ -11,11 +11,13 @@ EnvironmentFile=/opt/ghpulse/.env
 ExecStart=/opt/ghpulse/.venv/bin/python -m uvicorn backend.app:app \
     --host 127.0.0.1 --port 8000 \
     --proxy-headers --forwarded-allow-ips 127.0.0.1 \
-    --timeout-graceful-shutdown 5
+    --timeout-graceful-shutdown 90
 Restart=always
 RestartSec=5
 TimeoutStartSec=30
-TimeoutStopSec=10
+# gh-widgets gives each GitHub request a 20s timeout and three transient
+# retries; allow the lifecycle coordinator to drain that bounded attempt.
+TimeoutStopSec=90
 StandardOutput=journal
 StandardError=journal
 

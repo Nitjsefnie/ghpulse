@@ -83,10 +83,50 @@ response_cache = _TTLCache(ttl_seconds=3600)
 # Background refreshes for stale entries. Small pool on purpose: a refresh
 # is a full uncached query, and running many at once would starve the
 # connection pool that live requests need.
-_refresh_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cache-refresh")
+_refresh_pool: ThreadPoolExecutor | None = None
 _refreshing: set[str] = set()
 _key_locks: dict[str, threading.Lock] = {}
 _registry_guard = threading.Lock()
+_refresh_accepting = True
+
+
+def start_refresh_workers() -> None:
+    """Start the lifecycle-owned refresh executor if it is not running."""
+    global _refresh_pool, _refresh_accepting
+    with _registry_guard:
+        if _refresh_pool is None:
+            _refresh_pool = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="cache-refresh"
+            )
+        _refresh_accepting = True
+
+
+def stop_refresh_workers() -> None:
+    """Reject new refreshes and drain accepted work before pool teardown."""
+    global _refresh_pool, _refresh_accepting
+    with _registry_guard:
+        _refresh_accepting = False
+        pool = _refresh_pool
+        _refresh_pool = None
+    if pool is not None:
+        pool.shutdown(wait=True)
+
+
+def submit_refresh(fn: Callable[[], None]) -> bool:
+    """Submit one worker owned by the application lifecycle."""
+    global _refresh_pool
+    with _registry_guard:
+        if not _refresh_accepting:
+            return False
+        if _refresh_pool is None:
+            _refresh_pool = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="cache-refresh"
+            )
+        try:
+            _refresh_pool.submit(fn)
+        except RuntimeError:
+            return False
+        return True
 
 
 def _lock_for(key: str) -> threading.Lock:
@@ -112,7 +152,7 @@ def _schedule_refresh(key: str, fn: Callable[..., dict], kwargs: dict[str, Any])
             with _registry_guard:
                 _refreshing.discard(key)
 
-    _refresh_pool.submit(_run)
+    submit_refresh(_run)
 
 
 def warm(fn: Callable[..., dict], **overrides: Any) -> None:
@@ -145,7 +185,7 @@ def warm(fn: Callable[..., dict], **overrides: Any) -> None:
         except Exception:
             log.exception("cache warm failed for %s %r", fn.__qualname__, overrides)
 
-    _refresh_pool.submit(_run)
+    submit_refresh(_run)
 
 
 def cache_response(fn: Callable[..., dict]) -> Callable[..., dict]:

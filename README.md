@@ -85,6 +85,9 @@ SSE clients, stops new scheduler admission, drains every in-flight complete
 ingest while its pools remain open, clears the broadcaster, and only then
 closes both pools. There is no separate timer, weekly sync, resync mode,
 incremental mode, export mode, or fabricated full-vs-incremental distinction.
+The pinned GitHub transport uses a 20-second request timeout with three
+transient retries; the service example allows 90 seconds for a bounded worker
+to drain. Python threads are never force-cancelled underneath a transaction.
 
 For operations, see [`examples/ghpulse.service`](examples/ghpulse.service).
 

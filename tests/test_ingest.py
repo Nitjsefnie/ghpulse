@@ -68,6 +68,19 @@ def _install_source(monkeypatch, ingest, snapshot):
     monkeypatch.setenv("GH_USER", snapshot["account"]["login"])
 
 
+def test_validate_snapshot_accepts_and_preserves_unknown_issue_reason():
+    from backend import ingest
+
+    value = _snapshot("snapshot_initial.json")
+    value["issues"][0]["state_reason"] = "FUTURE_REASON_V2"
+
+    _source_at, _login, _repositories, issues, _pull_requests = (
+        ingest._validate_snapshot(value)
+    )
+
+    assert issues[0]["state_reason"] == "FUTURE_REASON_V2"
+
+
 def test_cold_sync_writes_one_current_row_per_node(ingest_db, ingest_module, monkeypatch):
     snapshot = _snapshot("snapshot_initial.json")
     _install_source(monkeypatch, ingest_module, snapshot)
@@ -87,7 +100,7 @@ def test_cold_sync_writes_one_current_row_per_node(ingest_db, ingest_module, mon
     assert _rows(ingest_db, "SELECT count(*) FROM pull_requests")[0][0] == 2
 
 
-def test_identical_snapshot_is_idempotent_and_does_not_notify(
+def test_identical_snapshot_is_idempotent_but_reports_success_and_notifies(
     ingest_db, ingest_module, monkeypatch
 ):
     snapshot = _snapshot("snapshot_initial.json")
@@ -107,7 +120,7 @@ def test_identical_snapshot_is_idempotent_and_does_not_notify(
     assert result["repositories_upserted"] == 0
     assert result["issues_upserted"] == 0
     assert result["pull_requests_upserted"] == 0
-    assert calls == []
+    assert calls == ["cache", "event"]
 
 
 def test_changed_issue_replaces_final_state(ingest_db, ingest_module, monkeypatch):
@@ -128,6 +141,28 @@ def test_changed_issue_replaces_final_state(ingest_db, ingest_module, monkeypatc
     assert row[2].astimezone(timezone.utc).isoformat().startswith(
         "2026-08-11T12:55:00"
     )
+
+
+def test_unknown_issue_reason_is_retained_but_not_counted_as_an_outcome(
+    ingest_db, ingest_module, monkeypatch
+):
+    from backend import api_dashboard
+
+    value = _snapshot("snapshot_initial.json")
+    value["issues"][0]["state_reason"] = "FUTURE_REASON_V2"
+    _install_source(monkeypatch, ingest_module, value)
+
+    ingest_module.run_ingest("future-reason")
+
+    assert _rows(
+        ingest_db,
+        "SELECT state, state_reason FROM issues WHERE node_id = 'I_1'",
+    )[0] == ("CLOSED", "FUTURE_REASON_V2")
+    body = api_dashboard.dashboard(
+        rng="all", repository=None, visibility="guest", fresh=1
+    )
+    assert body["summary"]["issues"]["completed"] == 0
+    assert body["summary"]["issues"]["not_planned"] == 0
 
 
 def test_complete_reconciliation_removes_unseen_rows(ingest_db, ingest_module, monkeypatch):
@@ -227,7 +262,8 @@ def test_invalid_visibility_or_owner_preserves_state_and_skips_hooks(
         ingest_db,
         "SELECT last_committed_at, last_source_snapshot_at FROM sync_state WHERE id = 1",
     )[0] == before_sync
-    assert hooks == []
+    assert [item[0] for item in hooks] == ["event"]
+    assert hooks[0][1][0] == "ingest_failed"
     error = _rows(
         ingest_db,
         "SELECT error FROM ingest_runs "
@@ -329,7 +365,8 @@ def test_mid_transaction_failure_rolls_back_all_current_state(
 
     assert _rows(ingest_db, "SELECT node_id, state_reason FROM issues ORDER BY node_id") == before
     assert _rows(ingest_db, "SELECT count(*) FROM repositories")[0][0] == 2
-    assert hooks == []
+    assert [item[0] for item in hooks] == ["event"]
+    assert hooks[0][1][0] == "ingest_failed"
 
 
 def test_lock_contention_returns_truthful_skipped_summary(ingest_module):

@@ -26,6 +26,7 @@ from backend import cache, db, events, github_source
 # pylint: disable=broad-exception-caught
 
 log = logging.getLogger("ghpulse.ingest")
+MAX_STATE_REASON_LENGTH = 64
 
 
 class SourceError(RuntimeError):
@@ -253,14 +254,18 @@ def _validate_snapshot(snapshot: Any) -> tuple[datetime, str, list[dict], list[d
         state = item["state"]
         if kind == "issues":
             reason = item["state_reason"]
-            if reason is not None and reason not in {"COMPLETED", "NOT_PLANNED", "REOPENED"}:
-                raise SourceError("invalid issue state_reason")
+            if reason is not None:
+                _require_string(reason, f"{kind} state_reason")
+                if len(reason) > MAX_STATE_REASON_LENGTH or not reason.strip():
+                    raise SourceError("invalid issue state_reason")
             if state not in {"OPEN", "CLOSED"}:
                 raise SourceError("invalid issue state")
-            if state == "OPEN" and (closed_at is not None or reason not in {None, "REOPENED"}):
+            if state == "OPEN" and (
+                closed_at is not None or reason in {"COMPLETED", "NOT_PLANNED"}
+            ):
                 raise SourceError("open issue has inconsistent final-state fields")
             if state == "CLOSED" and (
-                closed_at is None or reason not in {"COMPLETED", "NOT_PLANNED"}
+                closed_at is None or reason in {None, "REOPENED"}
             ):
                 raise SourceError("closed issue has inconsistent final-state fields")
             return {
@@ -325,9 +330,46 @@ def _finish_failed_run(run_id: int, finished_at: datetime, error: str) -> None:
                 "UPDATE ingest_runs SET finished_at = %s, error = %s WHERE id = %s",
                 (finished_at, error, run_id),
             )
+            connection.execute(
+                """
+                INSERT INTO sync_state
+                    (id, last_attempt_at, last_attempt_status,
+                     last_attempt_error, updated_at)
+                VALUES (1, %s, 'failure', %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    last_attempt_at = EXCLUDED.last_attempt_at,
+                    last_attempt_status = EXCLUDED.last_attempt_status,
+                    last_attempt_error = EXCLUDED.last_attempt_error,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (finished_at, error, finished_at),
+            )
             connection.commit()
     except Exception:  # pragma: no cover - only reached when the DB is unhealthy
         log.exception("could not record failed ingest run %s", run_id)
+
+
+def _record_failed_attempt(finished_at: datetime, error: str) -> None:
+    """Persist failure health even when the audit row could not be opened."""
+    try:
+        with db.viz_conn() as connection:
+            connection.execute(
+                """
+                INSERT INTO sync_state
+                    (id, last_attempt_at, last_attempt_status,
+                     last_attempt_error, updated_at)
+                VALUES (1, %s, 'failure', %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    last_attempt_at = EXCLUDED.last_attempt_at,
+                    last_attempt_status = EXCLUDED.last_attempt_status,
+                    last_attempt_error = EXCLUDED.last_attempt_error,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (finished_at, error, finished_at),
+            )
+            connection.commit()
+    except Exception:  # pragma: no cover - only reached when the DB is unhealthy
+        log.exception("could not record failed ingest attempt")
 
 
 def _upsert_repositories(connection, repositories: list[dict], observed_at: datetime) -> int:
@@ -528,14 +570,21 @@ def _commit_snapshot(
             connection.execute(
                 """
                 INSERT INTO sync_state (id, last_committed_at,
-                                        last_source_snapshot_at, updated_at)
-                VALUES (1, %s, %s, %s)
+                                        last_source_snapshot_at,
+                                        last_attempt_at,
+                                        last_attempt_status,
+                                        last_attempt_error,
+                                        updated_at)
+                VALUES (1, %s, %s, %s, 'success', NULL, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     last_committed_at = EXCLUDED.last_committed_at,
                     last_source_snapshot_at = EXCLUDED.last_source_snapshot_at,
+                    last_attempt_at = EXCLUDED.last_attempt_at,
+                    last_attempt_status = EXCLUDED.last_attempt_status,
+                    last_attempt_error = EXCLUDED.last_attempt_error,
                     updated_at = EXCLUDED.updated_at
                 """,
-                (committed_at, source_at, committed_at),
+                (committed_at, source_at, committed_at, committed_at),
             )
             finished_at = datetime.now(timezone.utc)
             connection.execute(
@@ -601,8 +650,6 @@ def _commit_snapshot(
 
 
 def _post_commit(summary: dict) -> None:
-    if not summary["data_changed"]:
-        return
     try:
         cache.response_cache.invalidate()
     except Exception:  # pragma: no cover - a cache hook cannot undo a commit
@@ -611,6 +658,17 @@ def _post_commit(summary: dict) -> None:
         events.broadcast_threadsafe("ingest_done", summary)
     except Exception:  # pragma: no cover - an event hook cannot undo a commit
         log.exception("could not broadcast ingest_done after ingest")
+
+
+def _post_failure(trigger: str, error: str) -> None:
+    """Broadcast durable failure health without exposing source credentials."""
+    try:
+        events.broadcast_threadsafe(
+            "ingest_failed",
+            {"trigger": trigger, "status": "failure", "error": error},
+        )
+    except Exception:  # pragma: no cover - an event hook cannot undo a failure record
+        log.exception("could not broadcast ingest_failed")
 
 
 def run_ingest(trigger: str) -> dict:
@@ -671,10 +729,13 @@ def run_ingest(trigger: str) -> dict:
             return summary
         except Exception as exc:
             error = f"{type(exc).__name__}: {exc}"
+            finished_at = datetime.now(timezone.utc)
             if run_id is not None:
-                _finish_failed_run(run_id, datetime.now(timezone.utc), error)
+                _finish_failed_run(run_id, finished_at, error)
             else:
+                _record_failed_attempt(finished_at, error)
                 log.exception("could not open ingest run: %s", error)
+            _post_failure(trigger, error)
             _reset_progress(error)
             raise
         finally:

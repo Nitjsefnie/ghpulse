@@ -65,6 +65,9 @@ def test_schema_has_ingest_audit_and_singleton_sync_state(schema_text):
     assert "CREATE TABLE IF NOT EXISTS sync_state" in schema_text
     assert "last_committed_at" in schema_text
     assert "last_source_snapshot_at" in schema_text
+    assert "last_attempt_at" in schema_text
+    assert "last_attempt_status" in schema_text
+    assert "last_attempt_error" in schema_text
     assert "data_changed" in schema_text
     assert "CHECK (id = 1)" in schema_text
 
@@ -218,7 +221,8 @@ def test_schema_upgrades_task2_audit_shape_and_removes_obsolete_columns(schema_t
         assert {"committed_at", "source_snapshot_at", "data_changed"} <= columns[
             "ingest_runs"
         ]
-        assert {"last_committed_at", "last_source_snapshot_at"} <= columns[
+        assert {"last_committed_at", "last_source_snapshot_at", "last_attempt_at",
+                "last_attempt_status", "last_attempt_error"} <= columns[
             "sync_state"
         ]
         assert "full_sync" not in columns["ingest_runs"]

@@ -64,7 +64,10 @@ def test_health_reports_empty_database_as_stale_but_operational(monkeypatch):
 def test_health_reports_last_success_and_live_progress(monkeypatch):
     now = datetime.now(timezone.utc)
     latest = (7, now - timedelta(seconds=5), None, "scheduled", None, None, None)
-    sync = (now - timedelta(seconds=5), now - timedelta(seconds=8))
+    sync = (
+        now - timedelta(seconds=5), now - timedelta(seconds=8),
+        now - timedelta(seconds=5), "success", None,
+    )
     app_module = _install_health_db(monkeypatch, HealthConnection(latest, sync))
     monkeypatch.setattr(
         app_module.ingest,
@@ -94,6 +97,8 @@ def test_health_reports_last_success_and_live_progress(monkeypatch):
     assert body["last_success"] == (now - timedelta(seconds=5)).isoformat()
     assert body["last_error"] is None
     assert body["stale"] is False
+    assert body["sync_status"] == "success"
+    assert body["last_attempt"]["status"] == "success"
 
 
 def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
@@ -108,7 +113,7 @@ def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
         None,
         "SourceError: GitHub unavailable",
     )
-    sync = (last_success, last_success)
+    sync = (last_success, last_success, now - timedelta(minutes=1), "failure", "SourceError: GitHub unavailable")
     app_module = _install_health_db(monkeypatch, HealthConnection(latest, sync))
     monkeypatch.setattr(
         app_module.ingest,
@@ -124,6 +129,8 @@ def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
     assert body["stale"] is True
     assert body["last_ingest"]["id"] == 8
     assert body["last_ingest"]["error"] == "SourceError: GitHub unavailable"
+    assert body["sync_status"] == "failure"
+    assert body["last_attempt"]["error"] == "SourceError: GitHub unavailable"
 
 
 def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatch):

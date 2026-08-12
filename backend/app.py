@@ -20,11 +20,11 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from starlette.responses import StreamingResponse
 
-from backend import api, db, events, ingest, login, session
-
-
 _REPO_ROOT = Path(__file__).resolve().parent.parent
+from backend import db
 db.load_dotenv(str(_REPO_ROOT / ".env"))
+
+from backend import api, cache, events, ingest, login, session  # noqa: E402
 
 _PUBLIC = _REPO_ROOT / "public"
 _SRC = _REPO_ROOT / "src"
@@ -165,6 +165,7 @@ def _health_payload() -> dict:
         sync_row = connection.execute(
             """
             SELECT last_committed_at, last_source_snapshot_at
+                   , last_attempt_at, last_attempt_status, last_attempt_error
             FROM sync_state
             WHERE id = 1
             """
@@ -178,7 +179,9 @@ def _health_payload() -> dict:
         last_success_value = latest_row[4]
 
     last_success = _iso(last_success_value)
-    last_error = progress_error or (latest_row[6] if latest_row else None)
+    sync_status = sync_row[3] if sync_row and sync_row[3] else None
+    sync_error = sync_row[4] if sync_row else None
+    last_error = progress_error or sync_error or (latest_row[6] if latest_row else None)
     stale = True
     if last_success_value is not None:
         if hasattr(last_success_value, "tzinfo"):
@@ -210,6 +213,12 @@ def _health_payload() -> dict:
         "last_success": last_success,
         "last_error": last_error,
         "stale": stale,
+        "sync_status": sync_status,
+        "last_attempt": {
+            "at": _iso(sync_row[2]) if sync_row else None,
+            "status": sync_status,
+            "error": sync_error,
+        },
         "last_ingest": last_ingest,
         "now": datetime.now(timezone.utc).isoformat(),
     }
@@ -282,6 +291,7 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         db.open_pools(wait=True)
         db.schema_check()
+        cache.start_refresh_workers()
         events.set_loop(asyncio.get_running_loop())
 
         scheduler = BackgroundScheduler(daemon=True, timezone="UTC")
@@ -320,6 +330,7 @@ async def lifespan(fastapi_app: FastAPI):
         # it would trade a slow shutdown for corrupted resource ownership.
         await asyncio.to_thread(owner.wait_for_idle)
         events.clear_loop()
+        cache.stop_refresh_workers()
         # close_pools() is idempotent and also cleans up a partially opened
         # pair if auth-pool opening or schema validation failed.
         db.close_pools()

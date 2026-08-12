@@ -62,6 +62,7 @@ def isolated_app(monkeypatch):
     auth_pool = FakePool()
     scheduled_calls: list[str] = []
     close_calls: list[bool] = []
+    cache_lifecycle: list[str] = []
 
     def open_pools(*, wait=True):
         viz_pool.open(wait=wait)
@@ -71,6 +72,8 @@ def isolated_app(monkeypatch):
     monkeypatch.setattr(app_module.db, "open_pools", open_pools)
     monkeypatch.setattr(app_module.db, "close_pools", lambda: close_calls.append(True))
     monkeypatch.setattr(app_module.db, "schema_check", lambda: None)
+    monkeypatch.setattr(app_module.cache, "start_refresh_workers", lambda: cache_lifecycle.append("start"))
+    monkeypatch.setattr(app_module.cache, "stop_refresh_workers", lambda: cache_lifecycle.append("stop"))
     monkeypatch.setattr(app_module, "BackgroundScheduler", FakeScheduler)
     monkeypatch.setattr(
         app_module.ingest,
@@ -78,13 +81,13 @@ def isolated_app(monkeypatch):
         lambda trigger: scheduled_calls.append(trigger) or {"skipped": False},
     )
     FakeScheduler.instances.clear()
-    return app_module.app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool
+    return app_module.app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool, cache_lifecycle
 
 
 def test_lifespan_opens_pools_and_schedules_complete_startup_and_hourly_ingest(
     isolated_app,
 ):
-    app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool = isolated_app
+    app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool, cache_lifecycle = isolated_app
 
     with TestClient(app):
         scheduler = FakeScheduler.instances[-1]
@@ -102,6 +105,7 @@ def test_lifespan_opens_pools_and_schedules_complete_startup_and_hourly_ingest(
     assert scheduler.shutdown_wait is False
     assert app_module.events.shutdown_event() is None
     assert close_calls == [True]
+    assert cache_lifecycle == ["start", "stop"]
 
 
 @pytest.mark.asyncio
@@ -178,7 +182,7 @@ async def test_real_scheduler_drains_blocked_ingest_before_closing_pools(
 def test_guest_can_load_static_shell_with_safe_session_injection_and_hashes(
     isolated_app, monkeypatch
 ):
-    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     token = "server-only-github-token"
     monkeypatch.setenv("GH_TOKEN", token)
     monkeypatch.setenv("BACKEND_URL", "/dashboard")
@@ -205,7 +209,7 @@ def test_guest_can_load_static_shell_with_safe_session_injection_and_hashes(
 def test_admin_ingest_requires_constant_time_token_and_same_origin(
     isolated_app, monkeypatch
 ):
-    app, app_module, scheduled_calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    app, app_module, scheduled_calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     monkeypatch.setenv("ADMIN_TOKEN", "correct-token")
     compare_calls: list[tuple[str, str]] = []
     real_compare = session.hmac.compare_digest
@@ -245,7 +249,7 @@ def test_admin_ingest_requires_constant_time_token_and_same_origin(
 def test_authenticated_and_guest_api_paths_use_production_middleware(
     isolated_app, monkeypatch
 ):
-    app, app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    app, app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     client = TestClient(app)
 
     assert client.get("/api/me").status_code == 401
@@ -263,7 +267,7 @@ def test_authenticated_and_guest_api_paths_use_production_middleware(
 
 @pytest.mark.asyncio
 async def test_sse_route_shutdown_stops_an_active_stream(isolated_app):
-    _app, app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    _app, app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     from backend import events
 
     class ConnectedRequest:
@@ -285,7 +289,7 @@ async def test_sse_route_shutdown_stops_an_active_stream(isolated_app):
 @pytest.mark.asyncio
 async def test_sse_route_cancellation_cleans_waiter_tasks(isolated_app):
     """Client navigation must not leave queue/event waiters on the loop."""
-    _app, app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    _app, app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     from backend import events
 
     class ConnectedRequest:
@@ -318,7 +322,7 @@ async def test_sse_route_cancellation_cleans_waiter_tasks(isolated_app):
 def test_served_index_keeps_json_injection_valid_for_quoted_backend_url(
     isolated_app, monkeypatch
 ):
-    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     monkeypatch.setenv("BACKEND_URL", '/api?x="unsafe"&y=</script>')
     client = TestClient(app)
     client.cookies.set(session.SESSION_COOKIE_NAME, session.make_guest_session_token())
@@ -330,7 +334,7 @@ def test_served_index_keeps_json_injection_valid_for_quoted_backend_url(
 
 
 def test_external_backend_url_is_allowed_by_connect_policy(isolated_app, monkeypatch):
-    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool = isolated_app
+    app, _app_module, _calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
     monkeypatch.setenv("BACKEND_URL", "https://api.example.test/v1/")
     client = TestClient(app)
     client.cookies.set(session.SESSION_COOKIE_NAME, session.make_guest_session_token())

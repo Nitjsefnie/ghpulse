@@ -228,6 +228,24 @@ def _last_ingest(connection) -> str | None:
     return _iso(row[0]) if row else None
 
 
+def _sync_summary(connection) -> dict:
+    """Expose operational sync state without exposing raw rows or secrets."""
+    row = connection.execute(
+        """
+        SELECT last_attempt_at, last_attempt_status, last_attempt_error
+        FROM sync_state
+        WHERE id = 1
+        """
+    ).fetchone()
+    if not row:
+        return {"status": None, "last_attempt_at": None, "error": None}
+    return {
+        "status": row[1],
+        "last_attempt_at": _iso(row[0]),
+        "error": row[2],
+    }
+
+
 def _fold_buckets(
     rows,
     window: RangeWindow,
@@ -276,6 +294,7 @@ def _dashboard_build(connection, window: RangeWindow, repository: str | None) ->
         repository_ids = _event_repository_ids(connection, window, repository)
         repositories = _repository_rows(connection, repository_ids)
         last_ingest = _last_ingest(connection)
+        sync = _sync_summary(connection)
 
     phases.done(
         issues=len(issue_buckets),
@@ -300,6 +319,9 @@ def _dashboard_build(connection, window: RangeWindow, repository: str | None) ->
                 "currently_open": pr_open,
             },
             "last_ingest": last_ingest,
+            "sync_status": sync["status"],
+            "sync_last_attempt_at": sync["last_attempt_at"],
+            "sync_error": sync["error"],
         },
         "repositories": repositories,
         "generated_at": _iso(started),

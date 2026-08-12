@@ -23,12 +23,17 @@ CREATE TABLE IF NOT EXISTS issues (
   updated_at       TIMESTAMPTZ NOT NULL,
   closed_at        TIMESTAMPTZ,
   state            TEXT NOT NULL CHECK (state IN ('OPEN', 'CLOSED')),
-  state_reason     TEXT CHECK (state_reason IS NULL OR state_reason IN
-                                ('COMPLETED', 'NOT_PLANNED', 'REOPENED')),
-  CHECK ((state = 'OPEN' AND closed_at IS NULL
-          AND (state_reason IS NULL OR state_reason = 'REOPENED'))
-         OR (state = 'CLOSED' AND closed_at IS NOT NULL
-             AND state_reason IN ('COMPLETED', 'NOT_PLANNED')))
+  state_reason     TEXT,
+  CONSTRAINT issues_state_reason_shape_check CHECK (
+    state_reason IS NULL OR
+    (length(state_reason) BETWEEN 1 AND 64 AND btrim(state_reason) <> '')
+  ),
+  CONSTRAINT issues_state_reason_state_check CHECK (
+    (state = 'OPEN' AND closed_at IS NULL
+     AND (state_reason IS NULL OR state_reason NOT IN ('COMPLETED', 'NOT_PLANNED')))
+    OR (state = 'CLOSED' AND closed_at IS NOT NULL
+        AND state_reason IS NOT NULL AND state_reason <> 'REOPENED')
+  )
 );
 
 CREATE INDEX IF NOT EXISTS issues_repository_idx ON issues (repository_id);
@@ -84,6 +89,9 @@ CREATE TABLE IF NOT EXISTS sync_state (
   id                       SMALLINT PRIMARY KEY CHECK (id = 1),
   last_committed_at        TIMESTAMPTZ,
   last_source_snapshot_at  TIMESTAMPTZ,
+  last_attempt_at          TIMESTAMPTZ,
+  last_attempt_status      TEXT,
+  last_attempt_error       TEXT,
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -96,8 +104,33 @@ ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS source_snapshot_at TIMESTAMPTZ;
 ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS data_changed BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_committed_at TIMESTAMPTZ;
 ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_source_snapshot_at TIMESTAMPTZ;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_attempt_status TEXT;
+ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS last_attempt_error TEXT;
 ALTER TABLE ingest_runs DROP COLUMN IF EXISTS full_sync;
 ALTER TABLE sync_state DROP COLUMN IF EXISTS last_successful_high_water;
+ALTER TABLE sync_state DROP CONSTRAINT IF EXISTS sync_state_attempt_status_check;
+ALTER TABLE sync_state ADD CONSTRAINT sync_state_attempt_status_check CHECK (
+  last_attempt_status IS NULL OR last_attempt_status IN ('success', 'failure')
+);
+
+-- Replace the original v1 issue-reason checks with a bounded forward-compatible
+-- shape check.  Unknown future reasons remain current state but are ignored by
+-- the known COMPLETED/NOT_PLANNED aggregate predicates.
+ALTER TABLE issues DROP CONSTRAINT IF EXISTS issues_state_reason_check;
+ALTER TABLE issues DROP CONSTRAINT IF EXISTS issues_check;
+ALTER TABLE issues DROP CONSTRAINT IF EXISTS issues_state_reason_shape_check;
+ALTER TABLE issues DROP CONSTRAINT IF EXISTS issues_state_reason_state_check;
+ALTER TABLE issues ADD CONSTRAINT issues_state_reason_shape_check CHECK (
+  state_reason IS NULL OR
+  (length(state_reason) BETWEEN 1 AND 64 AND btrim(state_reason) <> '')
+);
+ALTER TABLE issues ADD CONSTRAINT issues_state_reason_state_check CHECK (
+  (state = 'OPEN' AND closed_at IS NULL
+   AND (state_reason IS NULL OR state_reason NOT IN ('COMPLETED', 'NOT_PLANNED')))
+  OR (state = 'CLOSED' AND closed_at IS NOT NULL
+      AND state_reason IS NOT NULL AND state_reason <> 'REOPENED')
+);
 
 INSERT INTO sync_state (id)
 VALUES (1)
