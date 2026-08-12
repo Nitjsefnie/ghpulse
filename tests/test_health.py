@@ -113,7 +113,10 @@ def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
         None,
         "SourceError: GitHub unavailable",
     )
-    sync = (last_success, last_success, now - timedelta(minutes=1), "failure", "SourceError: GitHub unavailable")
+    sync = (
+        last_success, last_success, now - timedelta(minutes=1),
+        "failure", "SourceError: GitHub unavailable",
+    )
     app_module = _install_health_db(monkeypatch, HealthConnection(latest, sync))
     monkeypatch.setattr(
         app_module.ingest,

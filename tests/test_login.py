@@ -51,6 +51,7 @@ def _fake_user_fixture(monkeypatch):
 
     monkeypatch.setattr(session_mod, "load_user_config", _load)
     monkeypatch.setattr(session_mod, "write_user_config", _write)
+
     def _ensure(user_id):
         store[user_id][session_mod.WEB_SESSION_SECRET_KEY] = "test-session-secret"
         return "test-session-secret"

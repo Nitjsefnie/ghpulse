@@ -21,10 +21,10 @@ from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Respon
 from starlette.responses import StreamingResponse
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-from backend import db
+from backend import db  # noqa: E402  # pylint: disable=wrong-import-position
 db.load_dotenv(str(_REPO_ROOT / ".env"))
 
-from backend import api, cache, events, ingest, login, session  # noqa: E402
+from backend import api, cache, events, ingest, login, session  # noqa: E402  # pylint: disable=wrong-import-position
 
 _PUBLIC = _REPO_ROOT / "public"
 _SRC = _REPO_ROOT / "src"

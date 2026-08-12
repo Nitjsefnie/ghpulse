@@ -77,10 +77,10 @@ def test_atomic_secret_initializer_reads_existing_without_update(monkeypatch):
             return ("existing-secret",)
 
     cursor = Cursor()
-    cursor.transaction = lambda: Transaction()
 
     class Connection:
-        transaction = lambda self: Transaction()
+        def transaction(self):
+            return Transaction()
 
         def execute(self, query, params=()):
             return cursor.execute(query, params)
@@ -138,9 +138,11 @@ def test_atomic_secret_initializer_concurrent_real_postgres_preserves_external_k
     assert values[0] and values[0] == values[1]
 
     with psycopg.connect(auth_dsn) as connection:
-        config = connection.execute(
+        row = connection.execute(
             "SELECT config FROM users WHERE user_id = %s", (user_id,)
-        ).fetchone()[0]
+        ).fetchone()
+    assert row is not None
+    config = row[0]
     assert config["owner_key"] == "owner-value"
     assert config[session.WEB_SESSION_SECRET_KEY] == values[0]
     db.reset_auth_pool()

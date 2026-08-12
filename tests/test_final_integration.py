@@ -341,9 +341,15 @@ def test_final_production_integration(monkeypatch):
                 assert response.status_code == 200, response.text
                 assert response.json()["data_changed"] is True
 
-            guest.locator('.stat').filter(has_text='issues completed').get_by_text('0', exact=True).wait_for()
-            guest.locator('.stat').filter(has_text='issues not planned').get_by_text('1', exact=True).wait_for()
-            guest.locator('.stat').filter(has_text='pull requests merged').get_by_text('1', exact=True).wait_for()
+            guest.locator('.stat').filter(has_text='issues completed').get_by_text(
+                '0', exact=True
+            ).wait_for()
+            guest.locator('.stat').filter(has_text='issues not planned').get_by_text(
+                '1', exact=True
+            ).wait_for()
+            guest.locator('.stat').filter(has_text='pull requests merged').get_by_text(
+                '1', exact=True
+            ).wait_for()
             assert guest.locator('select option').count() == 2
             assert guest.locator('select option').nth(1).inner_text() == 'external/one'
             # This normal endpoint read is intentionally not used as proof:

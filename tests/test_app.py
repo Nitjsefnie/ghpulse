@@ -72,8 +72,12 @@ def isolated_app(monkeypatch):
     monkeypatch.setattr(app_module.db, "open_pools", open_pools)
     monkeypatch.setattr(app_module.db, "close_pools", lambda: close_calls.append(True))
     monkeypatch.setattr(app_module.db, "schema_check", lambda: None)
-    monkeypatch.setattr(app_module.cache, "start_refresh_workers", lambda: cache_lifecycle.append("start"))
-    monkeypatch.setattr(app_module.cache, "stop_refresh_workers", lambda: cache_lifecycle.append("stop"))
+    monkeypatch.setattr(
+        app_module.cache, "start_refresh_workers", lambda: cache_lifecycle.append("start")
+    )
+    monkeypatch.setattr(
+        app_module.cache, "stop_refresh_workers", lambda: cache_lifecycle.append("stop")
+    )
     monkeypatch.setattr(app_module, "BackgroundScheduler", FakeScheduler)
     monkeypatch.setattr(
         app_module.ingest,
@@ -81,13 +85,18 @@ def isolated_app(monkeypatch):
         lambda trigger: scheduled_calls.append(trigger) or {"skipped": False},
     )
     FakeScheduler.instances.clear()
-    return app_module.app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool, cache_lifecycle
+    return (
+        app_module.app, app_module, scheduled_calls, close_calls,
+        viz_pool, auth_pool, cache_lifecycle,
+    )
 
 
 def test_lifespan_opens_pools_and_schedules_complete_startup_and_hourly_ingest(
     isolated_app,
 ):
-    app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool, cache_lifecycle = isolated_app
+    app, app_module, scheduled_calls, close_calls, viz_pool, auth_pool, cache_lifecycle = (
+        isolated_app
+    )
 
     with TestClient(app):
         scheduler = FakeScheduler.instances[-1]
@@ -209,7 +218,10 @@ def test_guest_can_load_static_shell_with_safe_session_injection_and_hashes(
 def test_admin_ingest_requires_constant_time_token_and_same_origin(
     isolated_app, monkeypatch
 ):
-    app, app_module, scheduled_calls, _close_calls, _viz_pool, _auth_pool, _cache_lifecycle = isolated_app
+    (
+        app, app_module, scheduled_calls, _close_calls,
+        _viz_pool, _auth_pool, _cache_lifecycle,
+    ) = isolated_app
     monkeypatch.setenv("ADMIN_TOKEN", "correct-token")
     compare_calls: list[tuple[str, str]] = []
     real_compare = session.hmac.compare_digest
