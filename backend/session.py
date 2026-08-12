@@ -12,6 +12,7 @@ import json
 import os
 import secrets
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 from starlette.requests import Request
@@ -19,6 +20,7 @@ from starlette.responses import JSONResponse, RedirectResponse, Response
 
 from backend import db
 
+db.load_dotenv(str(Path(__file__).resolve().parent.parent / ".env"))
 
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE", "ghpulse_session")
 SESSION_COOKIE_MAX_AGE = 7 * 24 * 3600
@@ -121,6 +123,41 @@ def write_user_config(user_id: int, config: dict) -> None:
             "UPDATE users SET config = %s::jsonb WHERE user_id = %s",
             (json.dumps(config), user_id),
         )
+
+
+def ensure_user_session_secret(user_id: int) -> str | None:
+    """Read or atomically initialize only the session-secret JSONB key.
+
+    Login must not write back a stale copy of the external auth system's
+    complete config object.  The row lock makes first-login secret creation
+    serialize with the owning auth system, while ``jsonb_set`` preserves every
+    current key and the no-op path performs no UPDATE at all.
+    """
+    with db.auth_conn() as connection:
+        with connection.transaction():
+            row = connection.execute(
+                "SELECT config->>%s FROM users WHERE user_id = %s FOR UPDATE",
+                (WEB_SESSION_SECRET_KEY, user_id),
+            ).fetchone()
+            if row is None:
+                return None
+            existing = str(row[0] or "").strip()
+            if existing:
+                return existing
+            secret = secrets.token_urlsafe(32)
+            updated = connection.execute(
+                """
+                UPDATE users
+                SET config = jsonb_set(
+                    COALESCE(config, '{}'::jsonb),
+                    '{web_session_secret}', to_jsonb(%s::text), true
+                )
+                WHERE user_id = %s
+                RETURNING config->>%s
+                """,
+                (secret, user_id, WEB_SESSION_SECRET_KEY),
+            ).fetchone()
+            return str(updated[0]) if updated else None
 
 
 def make_guest_session_token() -> str:

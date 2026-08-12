@@ -21,6 +21,10 @@ router = APIRouter()
 _LOGIN_FAILURES: dict[str, list[float]] = {}
 _LOGIN_MAX_FAILURES = 5
 _LOGIN_WINDOW_SECONDS = 300
+_DUMMY_PASSWORD_CONFIG = {
+    auth.WEB_PASSWORD_HASH_KEY: "0" * 64,
+    auth.WEB_PASSWORD_SALT_KEY: "00" * 16,
+}
 
 
 def _check_login_rate_limit(ip: str) -> bool:
@@ -126,27 +130,20 @@ async def login_post(
         uid = int(user_id.strip())
     except ValueError:
         uid = 0
-    if uid <= 0:
-        return Response(
-            "Invalid user ID", status_code=400, media_type="text/plain"
-        )
-    if not user_exists(uid):
-        return Response(
-            "User not found.", status_code=404, media_type="text/plain"
-        )
-    config = session_mod.load_user_config(uid)
-    if not config or not auth.has_web_password(config):
-        return Response(
-            "Password not configured.", status_code=503,
-            media_type="text/plain",
-        )
-    if not auth.verify_web_password(config, password):
+    config = session_mod.load_user_config(uid) if uid > 0 else None
+    password_config = config if config and auth.has_web_password(config) else _DUMMY_PASSWORD_CONFIG
+    valid_password = auth.verify_web_password(password_config, password)
+    if uid <= 0 or not config or not auth.has_web_password(config) or not valid_password:
         _record_login_failure(ip)
         return Response(
-            "Invalid password", status_code=401, media_type="text/plain"
+            "Invalid credentials", status_code=401, media_type="text/plain"
         )
-    secret = session_mod.get_or_create_session_secret(config)
-    session_mod.write_user_config(uid, config)
+    secret = session_mod.ensure_user_session_secret(uid)
+    if not secret:
+        _record_login_failure(ip)
+        return Response(
+            "Invalid credentials", status_code=401, media_type="text/plain"
+        )
     token = session_mod.make_session_token(uid, secret)
     response = RedirectResponse("/", status_code=303)
     session_mod.set_session_cookie(response, token)

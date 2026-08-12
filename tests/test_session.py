@@ -1,5 +1,8 @@
 import hashlib
 import hmac
+import json
+import os
+import threading
 import time
 from unittest.mock import patch
 
@@ -52,6 +55,95 @@ def test_get_or_create_session_secret_persists():
     assert config[session.WEB_SESSION_SECRET_KEY] == s1
     s2 = session.get_or_create_session_secret(config)
     assert s2 == s1
+
+
+def test_atomic_secret_initializer_reads_existing_without_update(monkeypatch):
+    class Transaction:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    class Cursor:
+        def __init__(self):
+            self.queries = []
+
+        def execute(self, query, params=()):
+            self.queries.append((query, params))
+            return self
+
+        def fetchone(self):
+            return ("existing-secret",)
+
+    cursor = Cursor()
+    cursor.transaction = lambda: Transaction()
+
+    class Connection:
+        transaction = lambda self: Transaction()
+
+        def execute(self, query, params=()):
+            return cursor.execute(query, params)
+
+    class Context:
+        def __enter__(self):
+            return Connection()
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(session.db, "auth_conn", lambda: Context())
+
+    assert session.ensure_user_session_secret(42) == "existing-secret"
+    assert len(cursor.queries) == 1
+    assert "FOR UPDATE" in cursor.queries[0][0]
+
+
+def test_atomic_secret_initializer_concurrent_real_postgres_preserves_external_keys():
+    dsn = os.environ.get("GHPULSE_TEST_DATABASE_URL")
+    if not dsn:
+        import pytest
+        pytest.skip("GHPULSE_TEST_DATABASE_URL is not configured")
+    import psycopg
+    from backend import db
+    auth_dsn = os.environ.get("DATABASE_URL_AUTH", dsn)
+
+    user_id = 990001
+    with psycopg.connect(auth_dsn, autocommit=True) as connection:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS users "
+            "(user_id INTEGER PRIMARY KEY, config JSONB NOT NULL DEFAULT '{}'::jsonb)"
+        )
+        connection.execute("DELETE FROM users WHERE user_id = %s", (user_id,))
+        connection.execute(
+            "INSERT INTO users (user_id, config) VALUES (%s, %s::jsonb)",
+            (user_id, json.dumps({"owner_key": "owner-value"})),
+        )
+
+    db.reset_auth_pool()
+    values: list[str | None] = []
+    barrier = threading.Barrier(2)
+
+    def initialize():
+        barrier.wait()
+        values.append(session.ensure_user_session_secret(user_id))
+
+    workers = [threading.Thread(target=initialize) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=5)
+    assert all(not worker.is_alive() for worker in workers)
+    assert len(values) == 2
+    assert values[0] and values[0] == values[1]
+
+    with psycopg.connect(auth_dsn) as connection:
+        config = connection.execute(
+            "SELECT config FROM users WHERE user_id = %s", (user_id,)
+        ).fetchone()[0]
+    assert config["owner_key"] == "owner-value"
+    assert config[session.WEB_SESSION_SECRET_KEY] == values[0]
+    db.reset_auth_pool()
 
 
 def test_set_session_cookie_owns_complete_flag_contract(monkeypatch):

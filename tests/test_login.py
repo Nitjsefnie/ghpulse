@@ -51,6 +51,11 @@ def _fake_user_fixture(monkeypatch):
 
     monkeypatch.setattr(session_mod, "load_user_config", _load)
     monkeypatch.setattr(session_mod, "write_user_config", _write)
+    def _ensure(user_id):
+        store[user_id][session_mod.WEB_SESSION_SECRET_KEY] = "test-session-secret"
+        return "test-session-secret"
+
+    monkeypatch.setattr(session_mod, "ensure_user_session_secret", _ensure)
     monkeypatch.setattr(login_mod, "user_exists", _exists)
     return store
 
@@ -99,13 +104,21 @@ def test_wrong_password_is_401(app, fake_user):
     assert r.status_code == 401
 
 
-def test_unknown_user_is_404(app, fake_user):
+def test_unknown_user_is_non_enumerating_401(app, fake_user):
     client = TestClient(app)
     r = client.post(
         "/login",
         data={"user_id": "999", "password": "anything"},
     )
-    assert r.status_code == 404
+    assert r.status_code == 401
+    assert r.text == "Invalid credentials"
+
+
+def test_missing_user_and_wrong_password_have_same_failure_surface(app, fake_user):
+    client = TestClient(app)
+    wrong = client.post("/login", data={"user_id": "12345", "password": "wrong"})
+    missing = client.post("/login", data={"user_id": "999", "password": "wrong"})
+    assert (wrong.status_code, wrong.text) == (missing.status_code, missing.text)
 
 
 def test_rate_limit_after_5_failures(app, fake_user):
