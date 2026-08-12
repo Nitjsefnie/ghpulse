@@ -114,7 +114,7 @@ git commit -m "feat: bootstrap the ghpulse application shell"
 Run:
 
 ```bash
-ghwidgets_sha=$(git -C /root/gh-widgets rev-parse HEAD)
+ghwidgets_sha=6f7a02c8e1777f17898879be3c31b46d77e61d63
 git submodule add https://github.com/Nitjsefnie/gh-widgets.git vendor/gh-widgets
 git -C vendor/gh-widgets fetch /root/gh-widgets "$ghwidgets_sha"
 git -C vendor/gh-widgets checkout "$ghwidgets_sha"
