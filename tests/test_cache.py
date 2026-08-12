@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from threading import Event
 
 from backend import cache as cache_mod
 from backend.cache import _TTLCache, cache_response
@@ -87,3 +88,60 @@ def test_refresh_workers_can_be_started_and_drained_without_accepting_late_work(
     cache_mod.stop_refresh_workers()
     assert cache_mod.submit_refresh(lambda: None) is False
     cache_mod.start_refresh_workers()
+
+
+def test_stale_refresh_does_not_publish_after_a_newer_invalidation():
+    cache_mod.start_refresh_workers()
+    started = Event()
+    release = Event()
+    calls = []
+
+    @cache_response
+    def endpoint(rng: str = "30d", fresh: int = 0) -> dict:
+        del rng, fresh
+        calls.append(len(calls) + 1)
+        if len(calls) == 2:
+            started.set()
+            assert release.wait(5)
+        return {"n": len(calls)}
+
+    assert endpoint(rng="30d", fresh=0) == {"n": 1}
+    cache_mod.response_cache.invalidate()
+    assert endpoint(rng="30d", fresh=0) == {"n": 1}
+    assert started.wait(5)
+
+    cache_mod.response_cache.invalidate()
+    release.set()
+    deadline = time.time() + 5
+    while time.time() < deadline and len(calls) < 3:
+        endpoint(rng="30d", fresh=0)
+        time.sleep(0.02)
+
+    assert len(calls) == 3
+    assert endpoint(rng="30d", fresh=0) == {"n": 3}
+
+
+def test_rejected_refresh_submission_does_not_wedge_key(monkeypatch):
+    cache_mod.start_refresh_workers()
+    calls = []
+
+    @cache_response
+    def endpoint(rng: str = "30d", fresh: int = 0) -> dict:
+        del rng, fresh
+        calls.append(len(calls) + 1)
+        return {"n": len(calls)}
+
+    assert endpoint(rng="30d", fresh=0) == {"n": 1}
+    cache_mod.response_cache.invalidate()
+    monkeypatch.setattr(cache_mod, "submit_refresh", lambda fn: False)
+    assert endpoint(rng="30d", fresh=0) == {"n": 1}
+
+    monkeypatch.undo()
+    cache_mod.start_refresh_workers()
+    deadline = time.time() + 5
+    while time.time() < deadline and len(calls) < 2:
+        endpoint(rng="30d", fresh=0)
+        time.sleep(0.02)
+
+    assert len(calls) == 2
+    assert endpoint(rng="30d", fresh=0) == {"n": 2}

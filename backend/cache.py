@@ -70,6 +70,19 @@ class _TTLCache:
         with self._guard:
             self._generation += 1
 
+    def generation(self) -> int:
+        """Return the current invalidation generation token."""
+        with self._guard:
+            return self._generation
+
+    def put_if_generation(self, key: str, value: Any, generation: int) -> bool:
+        """Publish a refresh only when no newer invalidation has occurred."""
+        with self._guard:
+            if generation != self._generation:
+                return False
+            self._items[key] = (value, time.time(), self._generation)
+            return True
+
     def clear(self) -> None:
         """Drop all entries and advance the cache generation."""
         with self._guard:
@@ -140,10 +153,13 @@ def _schedule_refresh(key: str, fn: Callable[..., dict], kwargs: dict[str, Any])
         if key in _refreshing:
             return
         _refreshing.add(key)
+    refresh_generation = response_cache.generation()
 
     def _run() -> None:
         try:
-            response_cache.put(key, fn(**kwargs))
+            response_cache.put_if_generation(
+                key, fn(**kwargs), refresh_generation
+            )
         except Exception:
             # A failed refresh leaves the stale entry in place, which is
             # the whole point — better stale than a 500 or an 8s wait.
@@ -152,7 +168,9 @@ def _schedule_refresh(key: str, fn: Callable[..., dict], kwargs: dict[str, Any])
             with _registry_guard:
                 _refreshing.discard(key)
 
-    submit_refresh(_run)
+    if not submit_refresh(_run):
+        with _registry_guard:
+            _refreshing.discard(key)
 
 
 def warm(fn: Callable[..., dict], **overrides: Any) -> None:
