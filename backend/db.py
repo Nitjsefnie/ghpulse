@@ -42,6 +42,10 @@ def viz_pool() -> ConnectionPool:
             # never exercised; it would now be the bottleneck.
             min_size=2, max_size=20, timeout=10,
             kwargs={"autocommit": False},
+            # Pool ownership belongs to the FastAPI lifespan.  psycopg-pool's
+            # implicit eager-open path is deprecated and also binds async
+            # pool state to whichever loop happened to import this module.
+            open=False,
         )
     return _VIZ
 
@@ -66,6 +70,7 @@ def auth_pool() -> ConnectionPool:
             os.environ.get("DATABASE_URL_AUTH", "postgresql:///auth"),
             min_size=1, max_size=4, timeout=10,
             kwargs={"autocommit": True},
+            open=False,
         )
     return _AUTH
 
@@ -87,15 +92,41 @@ def close_pools() -> None:
     reset_auth_pool()
 
 
+def open_pools(*, wait: bool = True) -> tuple[ConnectionPool, ConnectionPool]:
+    """Open and return the independent pools owned by the application.
+
+    Pool construction is deliberately separate from opening.  This keeps
+    import-time/test setup side-effect free and makes the lifespan the one
+    place that binds pool workers to the serving process.
+    """
+    viz = viz_pool()
+    auth = auth_pool()
+    if viz.closed:
+        viz.open(wait=wait)
+    if auth.closed:
+        auth.open(wait=wait)
+    return viz, auth
+
+
+def _ensure_open(pool: ConnectionPool) -> None:
+    """Support direct module consumers while lifespan remains authoritative."""
+    if pool.closed:
+        pool.open(wait=True)
+
+
 @contextmanager
 def viz_conn():
-    with viz_pool().connection() as conn:
+    pool = viz_pool()
+    _ensure_open(pool)
+    with pool.connection() as conn:
         yield conn
 
 
 @contextmanager
 def auth_conn():
-    with auth_pool().connection() as conn:
+    pool = auth_pool()
+    _ensure_open(pool)
+    with pool.connection() as conn:
         yield conn
 
 

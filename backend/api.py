@@ -4,7 +4,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 from starlette.requests import Request
 
-from backend import db
 from backend.api_common import _iso, read_transaction, utc_now
 from backend.api_dashboard import (
     _event_repository_ids,

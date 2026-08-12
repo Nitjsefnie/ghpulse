@@ -1,0 +1,23 @@
+[Unit]
+Description=ghpulse — GitHub activity dashboard
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=ghpulse
+WorkingDirectory=/opt/ghpulse
+EnvironmentFile=/opt/ghpulse/.env
+ExecStart=/opt/ghpulse/.venv/bin/python -m uvicorn backend.app:app \
+    --host 127.0.0.1 --port 8000 \
+    --proxy-headers --forwarded-allow-ips 127.0.0.1 \
+    --timeout-graceful-shutdown 5
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

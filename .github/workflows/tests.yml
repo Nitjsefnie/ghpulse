@@ -1,0 +1,110 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ghpulse_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ghpulse_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    steps:
+      - name: Check out repository and pinned renderer
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.2.20'
+
+      - name: Install Python dependencies and quality tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install -r vendor/gh-widgets/requirements-dev.txt
+          python -m pip install ruff
+          python -m pip install "git-fame @ git+https://github.com/Nitjsefnie-OSC/git-fame@65925d8263576dc02510f06aadbcf0386d4edada"
+          git-fame --help | grep -- --jobs
+
+      - name: Apply schema to disposable test database
+        env:
+          PGPASSWORD: postgres
+        run: psql postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test -f backend/schema.sql
+
+      - name: Apply minimal auth schema to the disposable database
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test \
+            -v ON_ERROR_STOP=1 \
+            -c "CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, config JSONB NOT NULL DEFAULT '{}'::jsonb);"
+
+      - name: Run all pytest tests without skips
+        env:
+          GHPULSE_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          DATABASE_URL_VIZ: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          DATABASE_URL_AUTH: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
+          ADMIN_TOKEN: ci-test-admin-token
+          COOKIE_SECURE: '0'
+        run: |
+          set -o pipefail
+          python -m pytest tests/ -q -ra | tee pytest-output.txt
+          if grep -Eq '[0-9]+ skipped' pytest-output.txt; then
+            echo 'CI forbids skipped tests; provide the required dependency or fixture.' >&2
+            exit 1
+          fi
+
+      - name: Run static type and lint checks
+        run: |
+          python -m pyright
+          python -m pylint backend
+          python -m pycodestyle backend tests
+          python -m ruff check backend tests
+
+      - name: Exercise Bun JSX transpilation and loading order
+        run: |
+          bun -e '
+            const fs = require("fs");
+            const files = ["src/dashboard-charts.jsx", "src/app.jsx"];
+            for (const file of files) {
+              const source = fs.readFileSync(file, "utf8");
+              const output = new Bun.Transpiler({loader: "jsx", target: "es2020"}).transformSync(source);
+              if (!output.length) throw new Error(`empty transpilation: ${file}`);
+            }
+            const index = fs.readFileSync("public/index.html", "utf8");
+            if (!(index.indexOf("react.production.min.js") < index.indexOf("babel.min.js")
+              && index.indexOf("/src/dashboard-charts.jsx") < index.indexOf("/src/app.jsx"))) {
+              throw new Error("invalid production script loading order");
+            }
+          '
+          python -m pytest tests/test_app_contract.py tests/test_chart_contract.py -q
+
+      - name: Audit tracked files for control characters
+        run: python3 /root/.agent-bundle/scripts/ctrlchar_audit.py --repo . --strict
+
+      - name: Run pinned gh-widgets suite
+        working-directory: vendor/gh-widgets
+        run: python -m unittest discover -v

@@ -1,7 +1,7 @@
 """Current-state aggregate implementation for ``GET /api/dashboard``."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query

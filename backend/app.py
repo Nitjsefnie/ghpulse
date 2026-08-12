@@ -1,0 +1,357 @@
+"""FastAPI entrypoint for the ghpulse dashboard."""
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import urlparse
+
+from apscheduler.schedulers.background import BackgroundScheduler
+from fastapi import FastAPI, Request
+from fastapi.responses import ORJSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from starlette.responses import StreamingResponse
+
+from backend import api, db, events, ingest, login, session
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+db.load_dotenv(str(_REPO_ROOT / ".env"))
+
+_PUBLIC = _REPO_ROOT / "public"
+_SRC = _REPO_ROOT / "src"
+_STALE_AFTER_SECONDS = 2 * 60 * 60
+
+
+def _asset_hash(path: Path) -> str:
+    """Return a content hash suitable for a deterministic cache-bust URL."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _script_json(value: object) -> str:
+    """Serialize a value for an inline script without allowing tag escape."""
+    return (
+        json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+    )
+
+
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, "isoformat") else str(value)
+
+
+def _stale_after_seconds() -> float:
+    raw = os.environ.get("GHPULSE_STALE_AFTER_SECONDS", str(_STALE_AFTER_SECONDS))
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        return float(_STALE_AFTER_SECONDS)
+
+
+def _backend_origin() -> str | None:
+    """Return the configured absolute backend origin for the CSP, if any."""
+    parsed = urlparse(os.environ.get("BACKEND_URL", "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{parsed.scheme}://{host}{f':{port}' if port else ''}"
+
+
+def _ingest_progress() -> tuple[bool, dict | None, str | None]:
+    progress = ingest.progress_snapshot()
+    running = progress.get("phase") not in (None, "idle")
+    detail = None
+    if running:
+        done = int(progress.get("done") or 0)
+        total = int(progress.get("total") or 0)
+        detail = {
+            "phase": progress.get("phase"),
+            "done": done,
+            "total": total,
+            "pct": round(100.0 * done / total, 1) if total else None,
+            "run_id": progress.get("run_id"),
+            "started_at": progress.get("started_at"),
+        }
+    return running, detail, progress.get("last_error")
+
+
+def _health_payload() -> dict:
+    """Build health state from both live progress and durable sync metadata."""
+    with db.viz_conn() as connection:
+        latest_row = connection.execute(
+            """
+            SELECT id, started_at, finished_at, trigger, committed_at,
+                   source_snapshot_at, error
+            FROM ingest_runs
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        sync_row = connection.execute(
+            """
+            SELECT last_committed_at, last_source_snapshot_at
+            FROM sync_state
+            WHERE id = 1
+            """
+        ).fetchone()
+
+    running, progress, progress_error = _ingest_progress()
+    last_success_value = None
+    if sync_row:
+        last_success_value = sync_row[0]
+    if last_success_value is None and latest_row:
+        last_success_value = latest_row[4]
+
+    last_success = _iso(last_success_value)
+    last_error = progress_error or (latest_row[6] if latest_row else None)
+    stale = True
+    if last_success_value is not None:
+        if hasattr(last_success_value, "tzinfo"):
+            timestamp = last_success_value
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            stale = datetime.now(timezone.utc) - timestamp > timedelta(
+                seconds=_stale_after_seconds()
+            )
+        else:
+            stale = False
+
+    last_ingest = None
+    if latest_row:
+        last_ingest = {
+            "id": latest_row[0],
+            "started_at": _iso(latest_row[1]),
+            "finished_at": _iso(latest_row[2]),
+            "trigger": latest_row[3],
+            "committed_at": _iso(latest_row[4]),
+            "source_snapshot_at": _iso(latest_row[5]),
+            "error": latest_row[6],
+        }
+    return {
+        "ok": True,
+        "db": True,
+        "ingest_running": running,
+        "ingest_progress": progress,
+        "last_success": last_success,
+        "last_error": last_error,
+        "stale": stale,
+        "last_ingest": last_ingest,
+        "now": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+async def _event_stream(request: Request):
+    """Stream ingest completion events and heartbeat comments to the browser."""
+
+    async def generator():
+        queue = events.subscribe()
+        shutdown = events.shutdown_event()
+        try:
+            yield ": connected\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                if shutdown is not None and shutdown.is_set():
+                    break
+                waiters = [asyncio.create_task(queue.get())]
+                if shutdown is not None:
+                    waiters.append(asyncio.create_task(shutdown.wait()))
+                done, pending = await asyncio.wait(
+                    waiters,
+                    timeout=15,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    task.cancel()
+                if not done:
+                    yield ": ping\n\n"
+                    continue
+                if shutdown is not None and shutdown.is_set():
+                    break
+                first = next(iter(done), None)
+                if first is not None:
+                    try:
+                        yield first.result()
+                    except asyncio.CancelledError:
+                        break
+        finally:
+            events.unsubscribe(queue)
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@asynccontextmanager
+async def lifespan(fastapi_app: FastAPI):
+    """Own pools, scheduler, and the event-loop broadcaster as one unit."""
+    scheduler = None
+    try:
+        db.open_pools(wait=True)
+        db.schema_check()
+        events.set_loop(asyncio.get_running_loop())
+
+        scheduler = BackgroundScheduler(daemon=True, timezone="UTC")
+        scheduler.add_job(
+            lambda: ingest.run_ingest(trigger="scheduled"),
+            "interval",
+            hours=1,
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=300,
+        )
+        # APScheduler owns this one-shot worker thread, so a slow GitHub
+        # request never blocks the event loop or delays readiness.
+        scheduler.add_job(
+            lambda: ingest.run_ingest(trigger="startup"),
+            "date",
+            run_date=datetime.now(timezone.utc),
+            misfire_grace_time=300,
+        )
+        scheduler.start()
+        fastapi_app.state.scheduler = scheduler
+        yield
+    finally:
+        # Wake SSE consumers before releasing the loop they wait on.
+        events.signal_shutdown()
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
+        events.clear_loop()
+        # close_pools() is idempotent and also cleans up a partially opened
+        # pair if auth-pool opening or schema validation failed.
+        db.close_pools()
+
+
+app = FastAPI(
+    title="ghpulse",
+    docs_url=None,
+    redoc_url=None,
+    lifespan=lifespan,
+    default_response_class=ORJSONResponse,
+)
+
+
+class _SelectiveGZip(GZipMiddleware):  # pylint: disable=too-few-public-methods
+    """Compress JSON/static responses without buffering the SSE stream."""
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") == "http" and scope.get("path") == "/api/events":
+            await self.app(scope, receive, send)
+            return
+        await super().__call__(scope, receive, send)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    connect_sources = ["'self'"]
+    backend_origin = _backend_origin()
+    if backend_origin is not None:
+        connect_sources.append(backend_origin)
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "base-uri 'self'; frame-ancestors 'none'; object-src 'none'; "
+        "script-src 'self' https://unpkg.com 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        f"connect-src {' '.join(connect_sources)}; img-src 'self' data:;",
+    )
+    return response
+
+
+app.add_middleware(_SelectiveGZip, minimum_size=1024)
+app.middleware("http")(session.auth_middleware)
+app.include_router(login.router)
+app.include_router(api.router)
+
+
+@app.get("/health")
+def health() -> Response:
+    try:
+        return ORJSONResponse(_health_payload())
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        return JSONResponse(
+            {
+                "ok": False,
+                "db": False,
+                "error": str(exc),
+                "now": datetime.now(timezone.utc).isoformat(),
+            },
+            status_code=503,
+        )
+
+
+@app.post("/admin/ingest")
+async def admin_ingest() -> dict:
+    return await asyncio.to_thread(ingest.run_ingest, "manual")
+
+
+@app.get("/api/events")
+async def event_stream(request: Request):
+    return await _event_stream(request)
+
+
+@app.get("/")
+async def root_index(request: Request) -> Response:
+    html = (_PUBLIC / "index.html").read_text(encoding="utf-8")
+    backend_url = os.environ.get("BACKEND_URL", "/")
+    is_guest = bool(getattr(request.state, "is_guest", False))
+    injection = (
+        "<script>window.BACKEND_URL = "
+        + _script_json(backend_url)
+        + "; window.IS_GUEST = "
+        + _script_json(is_guest)
+        + ";</script>"
+    )
+    html = html.replace(
+        "<script>window.BACKEND_URL = window.BACKEND_URL || '';</script>\n"
+        "<script>window.IS_GUEST = window.IS_GUEST || false;</script>",
+        injection,
+    )
+    html = html.replace(
+        'href="/app.css"',
+        f'href="/app.css?v={_asset_hash(_PUBLIC / "app.css")}"',
+    )
+    for path in sorted(_SRC.glob("*")):
+        if path.is_file():
+            relative = path.relative_to(_SRC).as_posix()
+            html = html.replace(
+                f'src="/src/{relative}"',
+                f'src="/src/{relative}?v={_asset_hash(path)}"',
+            )
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, must-revalidate"})
+
+
+@app.get("/app.css")
+async def root_css() -> Response:
+    return FileResponse(
+        str(_PUBLIC / "app.css"),
+        media_type="text/css",
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
+
+
+app.mount("/src", StaticFiles(directory=str(_SRC)), name="src")
