@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ghpulse — Final Hardening Fix 1</title>
+<style>
+:root{--bg:#1b1a17;--panel:#252420;--ink:#f5f3ec;--muted:#8f8d82;--line:#3a3833;--accent:#d97757;--ok:#8fa56e;--mono:ui-monospace,SFMono-Regular,Menlo,monospace;--sans:system-ui,-apple-system,sans-serif}
+*{box-sizing:border-box}body{margin:0;padding:48px 24px 96px;background:var(--bg);color:var(--ink);font:15px/1.6 var(--sans)}main{max-width:980px;margin:auto}header{border-bottom:1px solid var(--line);padding-bottom:26px;margin-bottom:34px}h1,h2{font-weight:500;letter-spacing:-.01em}h1{font-size:38px;margin:0 0 8px}h2{font-size:24px;margin:0 0 8px}.meta,footer{color:var(--muted);font:12px var(--mono)}.pill{display:inline-block;border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:4px 10px;font:11px var(--mono);letter-spacing:.06em;text-transform:uppercase}.toc,.callout,table{background:var(--panel);border:1px solid var(--line);border-radius:10px}.toc{padding:18px 22px;margin-bottom:38px}.toc a{color:var(--accent);text-decoration:none}.toc li{margin:4px 0}section{margin:0 0 40px}.callout{padding:16px 20px;color:#cfccc2;margin:16px 0}code{font:12px var(--mono);color:#cfccc2;overflow-wrap:anywhere}li{margin:8px 0;color:#cfccc2}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);vertical-align:top}th{color:var(--muted);font:11px var(--mono);text-transform:uppercase}tr:last-child td{border-bottom:0}.ok{color:var(--ok);font-family:var(--mono)}footer{border-top:1px solid var(--line);padding-top:18px}
+</style>
+</head>
+<body><main>
+<header><h1>ghpulse final hardening fix 1</h1><span class="pill">done with concerns</span><p class="meta">Commit 7551e16 · GPT-5.6 Luna · no push</p></header>
+<nav class="toc"><strong>Contents</strong><ol><li><a href="#status">Uncached sync status</a></li><li><a href="#redaction">Public error redaction</a></li><li><a href="#shutdown">Truthful shutdown</a></li><li><a href="#evidence">Focused evidence</a></li><li><a href="#remaining">Remaining gate</a></li></ol></nav>
+<section id="status"><h2>Uncached durable sync status</h2><p>The cached dashboard aggregate no longer stores operational status. Normal route responses overlay the current durable <code>sync_state</code> marker through a separate uncached read, so cached timeline arrays remain unchanged while a new client sees the latest attempt.</p><div class="callout"><strong>Bounded public failure:</strong> <code>SYNC_FAILED</code> / <code>sync failed</code>; raw detail remains in the audit row.</div></section>
+<section id="redaction"><h2>Public error redaction</h2><ul><li>Health and last-attempt surfaces use bounded sync/database codes and messages.</li><li>Failure SSE payloads contain status, code, bounded message, and timestamp only.</li><li>The browser no longer appends server exception detail to request errors.</li><li>Sentinel-secret tests cover health, database failures, ingest events, and audit retention.</li></ul></section>
+<section id="shutdown"><h2>Truthful shutdown</h2><p>The service removes Uvicorn's finite graceful timeout and sets <code>TimeoutStopSec=infinity</code>. Documentation records per-request timeouts with unbounded total pagination and no worker termination under a transaction.</p></section>
+<section id="evidence"><h2>Focused evidence</h2><table><thead><tr><th>Gate</th><th>Result</th></tr></thead><tbody><tr><td>Focused PostgreSQL/API/app/health/ingest contracts</td><td class="ok">62 passed · 22.15s</td></tr><tr><td>TDD regression probe</td><td class="ok">Expected initial failures, then green</td></tr><tr><td>Vendor</td><td>Unchanged at <code>54d2ec7</code></td></tr></tbody></table></section>
+<section id="remaining"><h2>Remaining gate</h2><p>No broad suite, static-quality suite, or fresh full browser/renderer gate was rerun by this bounded closeout after commit; an independent reviewer process already owned those gates.</p></section>
+<footer>Evidence is local and uses the real PostgreSQL test DSN. No remote push performed.</footer>
+</main></body></html>
