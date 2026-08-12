@@ -103,6 +103,10 @@ def test_uvicorn_served_page_mounts_exactly_two_panels_without_browser_errors(
             app_module.app,
             host="127.0.0.1",
             port=port,
+            # ghpulse exposes SSE only. Avoid Uvicorn's automatic WebSocket
+            # protocol import, which is unused and emits a deprecation warning
+            # under the strict browser-smoke gate.
+            ws="none",
             lifespan="on",
             log_level="error",
             access_log=False,

@@ -107,7 +107,7 @@ jobs:
       - name: Exercise the served Chromium smoke explicitly
         env:
           GHPULSE_BROWSER_SMOKE: '1'
-        run: python -m pytest tests/test_browser_smoke.py -q -m browser
+        run: python -W error::DeprecationWarning -m pytest tests/test_browser_smoke.py -q -m browser
 
       - name: Run pinned gh-widgets suite
         working-directory: vendor/gh-widgets
