@@ -257,7 +257,7 @@ The submodule commit is part of every deploy. Deployment fails if it is missing 
 - `public/`, `src/`: Claudit-derived application shell plus the generalized stacked/cumulative time-series component.
 - `tests/fixtures/`: small GitHub GraphQL and normalized-snapshot fixtures.
 - `tests/`: parser/source, ingest, API, auth, geometry, and frontend contract coverage.
-- `examples/ghpulse.service`, `examples/ghpulse-resync.service`: deployment examples.
+- `examples/ghpulse.service`: deployment example for startup plus hourly complete ingestion.
 - `README.md`, `AGENTS.md`: scope, commands, invariants, and operational rules.
 
 ## Approval

@@ -372,7 +372,7 @@ git commit -m "feat: build the two-panel ghpulse dashboard"
 
 **Files:**
 - Create: `backend/app.py`
-- Create: `examples/ghpulse.service`, `examples/ghpulse-resync.service`
+- Create: `examples/ghpulse.service`
 - Create: `README.md`, `AGENTS.md`, `CONTRIBUTING.md`
 - Create: `.github/workflows/tests.yml`
 - Modify: `backend/.env.example`
@@ -380,11 +380,11 @@ git commit -m "feat: build the two-panel ghpulse dashboard"
 
 **Interfaces:**
 - Produces: startup ingest, hourly complete-snapshot scheduler, `/health`, protected `POST /admin/ingest`, static application routes.
-- Produces: service examples for hourly in-process sync and weekly explicit full resync.
+- Produces: one service example whose startup and hourly paths both run complete current-snapshot ingestion.
 
 - [ ] **Step 1: Write failing lifecycle and health tests**
 
-Cover startup scheduling, non-blocking shutdown with SSE clients, health before/after success and error, admin token constant-time check, origin rejection, static asset injection, and cache-bust query strings.
+Cover startup scheduling, non-blocking shutdown with SSE clients, health before/after success and error, admin token constant-time check, origin rejection, static asset injection, cache-bust query strings, and authenticated/guest API middleware behavior. Exercise the real chart/app Babel loading order through the served page.
 
 - [ ] **Step 2: Run lifecycle tests and verify app module is missing**
 
@@ -393,20 +393,20 @@ Expected: import failure.
 
 - [ ] **Step 3: Port Claudit lifecycle behavior**
 
-Mount auth/API routers, schedule hourly `run_ingest("scheduled")`, launch startup ingest outside the event loop, report progress/last run through health, and shut down scheduler/pools/broadcaster deterministically.
+Mount auth/API routers, schedule hourly `run_ingest("scheduled")`, launch startup ingest outside the event loop, report progress/last run through health, and shut down scheduler/pools/broadcaster deterministically. Replace deprecated eager `ConnectionPool(open=...)` construction with explicit lifespan-controlled pool opening/closing. Remove the carried unused `timezone` import from `api_dashboard.py`.
 
 - [ ] **Step 4: Add deployment and repository documentation**
 
-Document scope, setup, PostgreSQL schema, environment, submodule initialization/update, standalone gh-widgets relationship, manual/full ingest, auth/guest behavior, tests, and the current-state event invariant. Service examples must use explicit paths and timeouts and must never expose the GitHub token to the frontend.
+Document scope, setup, PostgreSQL schema, environment, submodule initialization/update, standalone gh-widgets relationship, manual/complete ingest, auth/guest behavior, tests, and the current-state event invariant. The service example must use explicit paths and timeouts and must never expose the GitHub token to the frontend.
 
 - [ ] **Step 5: Run the complete verification suite**
 
 Run: `python3 -m pytest tests/ -q`  
 Run: `python3 -m pyright`  
 Run: `python3 -m pylint backend`  
-Run: `node --check` through the repository's JSX source-contract harness  
+Run the repository's Bun JSX parse/transpile and executable frontend contract harness  
 Run: `python3 /root/.agent-bundle/scripts/ctrlchar_audit.py` against tracked files  
-Expected: every command exits 0.
+Expected: every command exits 0 with `GHPULSE_TEST_DATABASE_URL` configured so no PostgreSQL test skips; Bun is provisioned in CI; no deprecation warnings remain.
 
 - [ ] **Step 6: Run a local fixture-backed smoke test**
 
@@ -440,7 +440,7 @@ Run ghpulse's full verification from Task 7 and `python3 -m unittest discover -v
 
 - [ ] **Step 3: Verify current-state chart behavior end to end**
 
-Ingest the initial fixture, record the issue/PR API totals, ingest the changed fixture, and confirm the previous outcome bucket decrements while the new outcome bucket increments. Confirm all cumulative lines restart at zero for `24h`, `7d`, `30d`, `90d`, `1y`, and `all`.
+Ingest the initial fixture, record the issue/PR API totals, ingest the changed fixture, and confirm the previous outcome bucket decrements while the new outcome bucket increments. Confirm all cumulative lines restart at zero for `24h`, `7d`, `30d`, `90d`, `1y`, and `all`. Exercise authenticated and guest requests through the production middleware/static app and verify served Babel chart/app loading under the production CSP.
 
 - [ ] **Step 4: Verify worktree and commit history**
 
