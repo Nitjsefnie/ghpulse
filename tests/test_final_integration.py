@@ -140,6 +140,24 @@ def _attach_browser_assertions(page):
     return errors
 
 
+def _make_external_font_loading_deterministic(context) -> None:
+    """Keep the production shell independent of a mutable font CDN response.
+
+    The page still serves its production stylesheet and CSP.  Only the
+    non-functional Google Fonts stylesheet is fulfilled with an empty,
+    successful response so a changed CDN font URL cannot create a browser
+    request error unrelated to the dashboard boundary under test.
+    """
+    context.route(
+        "https://fonts.googleapis.com/**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/css",
+            body="",
+        ),
+    )
+
+
 def _wait_dashboard(page) -> None:
     page.locator('section[aria-label="External Issues"]').wait_for()
     page.locator('section[aria-label="External Pull Requests"]').wait_for()
@@ -262,6 +280,7 @@ def test_final_production_integration(monkeypatch):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             guest_context = browser.new_context()
+            _make_external_font_loading_deterministic(guest_context)
             guest = guest_context.new_page()
             guest_errors = _attach_browser_assertions(guest)
             guest.goto(f"{base_url}/login")
@@ -309,6 +328,7 @@ def test_final_production_integration(monkeypatch):
             _assert_browser_clean(guest, guest_errors)
 
             auth_context = browser.new_context()
+            _make_external_font_loading_deterministic(auth_context)
             authenticated = auth_context.new_page()
             auth_errors = _attach_browser_assertions(authenticated)
             authenticated.goto(f"{base_url}/login")
