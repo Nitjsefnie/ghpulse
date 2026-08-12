@@ -2,3 +2,20 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# Frontend/build artefacts.
+node_modules/
+dist/
+build/
+.cache/
+
+# Local process output and secrets.
+*.log
+*.pid
+.env
+.env.local
+.env.*.local
+!.env.example
+secrets/
+*.token
