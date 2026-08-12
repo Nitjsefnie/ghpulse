@@ -18,6 +18,7 @@ PBKDF2_ITERATIONS = 200_000
 
 
 def has_web_password(config: dict) -> bool:
+    """Return whether a user config contains both password fields."""
     return bool(
         config.get(WEB_PASSWORD_HASH_KEY)
         and config.get(WEB_PASSWORD_SALT_KEY)
@@ -25,6 +26,7 @@ def has_web_password(config: dict) -> bool:
 
 
 def pbkdf2(password: str, salt_hex: str) -> str:
+    """Derive the configured PBKDF2-SHA256 password digest."""
     salt = bytes.fromhex(salt_hex)
     digest = hashlib.pbkdf2_hmac(
         "sha256",
@@ -36,6 +38,7 @@ def pbkdf2(password: str, salt_hex: str) -> str:
 
 
 def set_web_password(config: dict, password: str) -> None:
+    """Replace a config's password fields with a fresh salted digest."""
     salt_hex = secrets.token_hex(16)
     digest_hex = pbkdf2(password, salt_hex)
     config[WEB_PASSWORD_SALT_KEY] = salt_hex
@@ -43,6 +46,7 @@ def set_web_password(config: dict, password: str) -> None:
 
 
 def verify_web_password(config: dict, password: str) -> bool:
+    """Constant-time compare a candidate password with stored fields."""
     stored_hash = config.get(WEB_PASSWORD_HASH_KEY)
     stored_salt = config.get(WEB_PASSWORD_SALT_KEY)
     if not stored_hash or not stored_salt:

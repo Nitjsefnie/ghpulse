@@ -17,6 +17,10 @@ from typing import Any, Callable
 
 log = logging.getLogger("ghpulse.cache")
 
+# Refresh work is deliberately best-effort: a failed background computation
+# leaves the prior stale value available to readers.
+# pylint: disable=broad-exception-caught
+
 
 class _TTLCache:
     """Process-local cache with a flat TTL and generation-based staleness.
@@ -52,10 +56,12 @@ class _TTLCache:
             return value, generation != self._generation
 
     def get(self, key: str) -> Any | None:
+        """Return a cached value without exposing its staleness bit."""
         entry = self.get_entry(key)
         return None if entry is None else entry[0]
 
     def put(self, key: str, value: Any) -> None:
+        """Store one value with the current cache generation."""
         with self._guard:
             self._items[key] = (value, time.time(), self._generation)
 
@@ -65,6 +71,7 @@ class _TTLCache:
             self._generation += 1
 
     def clear(self) -> None:
+        """Drop all entries and advance the cache generation."""
         with self._guard:
             self._items.clear()
             self._generation += 1

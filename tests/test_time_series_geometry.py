@@ -288,7 +288,10 @@ def test_overlapping_and_out_of_range_dense_intervals_fail_deterministically():
         [{start: 'bad', end: 200, opened: 1}],
       ];
       const outcomes = cases.map(rows => {
-        try { window.__chart.buildStackedTimeSeriesData(rows, series, range, 10); return 'accepted'; }
+        try {
+          window.__chart.buildStackedTimeSeriesData(rows, series, range, 10);
+          return 'accepted';
+        }
         catch (error) { return error.name + ':' + error.message; }
       });
       console.log(JSON.stringify(outcomes));
@@ -312,7 +315,10 @@ def test_dense_intervals_cover_the_selected_range_without_gaps():
         [{start: 100, end: 200, opened: 1}, {start: 220, end: 400, opened: 1}],
       ];
       const outcomes = invalid.map(rows => {
-        try { window.__chart.buildStackedTimeSeriesData(rows, series, range, 10); return 'accepted'; }
+        try {
+          window.__chart.buildStackedTimeSeriesData(rows, series, range, 10);
+          return 'accepted';
+        }
         catch (error) { return error.name + ':' + error.message; }
       });
       const valid = window.__chart.buildStackedTimeSeriesData([

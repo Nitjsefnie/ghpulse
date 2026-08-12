@@ -68,5 +68,6 @@ def repositories_route(
     request: Request,
     rng: str = Query("30d", alias="range"),
 ) -> dict:
+    """Serve public external repositories for the selected range."""
     visibility = "guest" if bool(getattr(request.state, "is_guest", False)) else "authenticated"
     return repositories(rng=rng, visibility=visibility)

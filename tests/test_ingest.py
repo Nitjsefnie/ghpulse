@@ -95,8 +95,12 @@ def test_identical_snapshot_is_idempotent_and_does_not_notify(
     ingest_module.run_ingest("first")
 
     calls = []
-    monkeypatch.setattr(ingest_module.cache.response_cache, "invalidate", lambda: calls.append("cache"))
-    monkeypatch.setattr(ingest_module.events, "broadcast_threadsafe", lambda *args: calls.append("event"))
+    monkeypatch.setattr(
+        ingest_module.cache.response_cache, "invalidate", lambda: calls.append("cache")
+    )
+    monkeypatch.setattr(
+        ingest_module.events, "broadcast_threadsafe", lambda *args: calls.append("event")
+    )
     result = ingest_module.run_ingest("second")
 
     assert result["data_changed"] is False
@@ -226,7 +230,8 @@ def test_invalid_visibility_or_owner_preserves_state_and_skips_hooks(
     assert hooks == []
     error = _rows(
         ingest_db,
-        f"SELECT error FROM ingest_runs WHERE trigger = 'invalid-{mutation}' ORDER BY id DESC LIMIT 1",
+        "SELECT error FROM ingest_runs "
+        f"WHERE trigger = 'invalid-{mutation}' ORDER BY id DESC LIMIT 1",
     )[0][0]
     assert error
 
@@ -377,7 +382,10 @@ def test_progress_snapshot_is_thread_safe_and_resets(ingest_module):
     assert first["total"] == 0
 
     values = []
-    threads = [threading.Thread(target=lambda: values.append(ingest_module.progress_snapshot())) for _ in range(20)]
+    threads = [
+        threading.Thread(target=lambda: values.append(ingest_module.progress_snapshot()))
+        for _ in range(20)
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:

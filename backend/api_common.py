@@ -63,8 +63,7 @@ def read_transaction() -> Iterator:
         except BaseException:
             connection.rollback()
             raise
-        else:
-            connection.commit()
+        connection.commit()
 
 
 class Phases:
@@ -79,6 +78,7 @@ class Phases:
 
     @contextmanager
     def step(self, label: str):
+        """Record elapsed time for one named dashboard phase."""
         started = time.perf_counter()
         try:
             yield
@@ -86,9 +86,11 @@ class Phases:
             self._marks.append((label, time.perf_counter() - started))
 
     def mark(self, label: str, seconds: float) -> None:
+        """Add an externally measured phase duration."""
         self._marks.append((label, seconds))
 
     def execute(self, label: str, cursor, query, args=None):
+        """Execute one timed SQL statement and retain its result."""
         started = time.perf_counter()
         try:
             if args is None:
@@ -98,6 +100,7 @@ class Phases:
             self._marks.append((label, time.perf_counter() - started))
 
     def done(self, **extra) -> None:
+        """Emit the collected timings when diagnostic logging is enabled."""
         if not TIMING_ON:
             return
         total_ms = (time.perf_counter() - self._t0) * 1000
@@ -151,6 +154,7 @@ def _bucket_seconds(delta: timedelta) -> int:
 
 
 def _iso(value: datetime | None) -> str | None:
+    """Serialize a timestamp as an explicit UTC ISO-8601 value."""
     if value is None:
         return None
     if value.tzinfo is None or value.utcoffset() is None:
@@ -159,12 +163,14 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def as_utc(value: datetime) -> datetime:
+    """Normalize naive database timestamps to UTC-aware values."""
     if value.tzinfo is None or value.utcoffset() is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
 
 
 def epoch_seconds(value: datetime) -> int:
+    """Return whole UTC seconds since the Unix epoch."""
     return int((as_utc(value) - _EPOCH).total_seconds())
 
 

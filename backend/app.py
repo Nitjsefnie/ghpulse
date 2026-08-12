@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,6 +29,63 @@ db.load_dotenv(str(_REPO_ROOT / ".env"))
 _PUBLIC = _REPO_ROOT / "public"
 _SRC = _REPO_ROOT / "src"
 _STALE_AFTER_SECONDS = 2 * 60 * 60
+_log = logging.getLogger("ghpulse.app")
+
+
+class _IngestCoordinator:
+    """Own ingest calls so teardown can drain workers before closing pools."""
+
+    def __init__(self):
+        self._condition = threading.Condition()
+        self._active = 0
+        self._closing = False
+
+    def run(self, trigger: str) -> dict:
+        """Run one ingest unless application teardown has begun."""
+        with self._condition:
+            if self._closing:
+                return {
+                    "skipped": True,
+                    "reason": "application shutting down",
+                    "trigger": trigger,
+                }
+            self._active += 1
+        try:
+            return ingest.run_ingest(trigger)
+        finally:
+            with self._condition:
+                self._active -= 1
+                self._condition.notify_all()
+
+    def begin_shutdown(self) -> None:
+        """Reject jobs that have not entered before resource teardown."""
+        with self._condition:
+            self._closing = True
+            self._condition.notify_all()
+
+    @property
+    def closing(self) -> bool:
+        """Whether this coordinator belongs to a lifespan that has ended."""
+        with self._condition:
+            return self._closing
+
+    def wait_for_idle(self) -> None:
+        """Wait until every admitted ingest has released shared resources."""
+        with self._condition:
+            while self._active:
+                self._condition.wait()
+
+
+def _run_scheduled_ingest(owner: _IngestCoordinator, trigger: str) -> dict:
+    """Run a scheduler-owned ingest without leaking an exception to APScheduler."""
+    try:
+        return owner.run(trigger)
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # run_ingest already records the failed run and health exposes it. The
+        # scheduler must not retain an uncaught worker exception while tearing
+        # down, nor should it retry a failed complete snapshot implicitly.
+        _log.exception("%s ingest failed", trigger)
+        return {"skipped": False, "trigger": trigger, "error": str(exc)}
 
 
 def _asset_hash(path: Path) -> str:
@@ -208,6 +267,8 @@ async def _event_stream(request: Request):
 async def lifespan(fastapi_app: FastAPI):
     """Own pools, scheduler, and the event-loop broadcaster as one unit."""
     scheduler = None
+    owner = _IngestCoordinator()
+    fastapi_app.state.ingest_owner = owner
     try:
         db.open_pools(wait=True)
         db.schema_check()
@@ -215,7 +276,7 @@ async def lifespan(fastapi_app: FastAPI):
 
         scheduler = BackgroundScheduler(daemon=True, timezone="UTC")
         scheduler.add_job(
-            lambda: ingest.run_ingest(trigger="scheduled"),
+            lambda: _run_scheduled_ingest(owner, "scheduled"),
             "interval",
             hours=1,
             coalesce=True,
@@ -225,7 +286,7 @@ async def lifespan(fastapi_app: FastAPI):
         # APScheduler owns this one-shot worker thread, so a slow GitHub
         # request never blocks the event loop or delays readiness.
         scheduler.add_job(
-            lambda: ingest.run_ingest(trigger="startup"),
+            lambda: _run_scheduled_ingest(owner, "startup"),
             "date",
             run_date=datetime.now(timezone.utc),
             misfire_grace_time=300,
@@ -236,12 +297,23 @@ async def lifespan(fastapi_app: FastAPI):
     finally:
         # Wake SSE consumers before releasing the loop they wait on.
         events.signal_shutdown()
+        # Stop admission before stopping APScheduler. A callback already in
+        # the executor is counted by owner and is drained below; a callback
+        # dequeued during shutdown returns without touching the pools.
+        owner.begin_shutdown()
         if scheduler is not None:
             scheduler.shutdown(wait=False)
+        # APScheduler's non-waiting shutdown deliberately leaves its current
+        # worker alive. Keep the loop responsive while waiting for that worker
+        # to finish. There is intentionally no cancellation timeout: Python
+        # cannot safely kill a worker in a DB transaction, so closing beneath
+        # it would trade a slow shutdown for corrupted resource ownership.
+        await asyncio.to_thread(owner.wait_for_idle)
         events.clear_loop()
         # close_pools() is idempotent and also cleans up a partially opened
         # pair if auth-pool opening or schema validation failed.
         db.close_pools()
+        fastapi_app.state.ingest_owner = None
 
 
 app = FastAPI(
@@ -265,6 +337,7 @@ class _SelectiveGZip(GZipMiddleware):  # pylint: disable=too-few-public-methods
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    """Attach the browser CSP and related policy headers to every response."""
     response = await call_next(request)
     connect_sources = ["'self'"]
     backend_origin = _backend_origin()
@@ -290,6 +363,7 @@ app.include_router(api.router)
 
 @app.get("/health")
 def health() -> Response:
+    """Return database, ingest-progress, and freshness state."""
     try:
         return ORJSONResponse(_health_payload())
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -305,17 +379,25 @@ def health() -> Response:
 
 
 @app.post("/admin/ingest")
-async def admin_ingest() -> dict:
-    return await asyncio.to_thread(ingest.run_ingest, "manual")
+async def admin_ingest(request: Request) -> dict:
+    """Run one complete manual snapshot through the lifespan owner."""
+    owner = getattr(request.app.state, "ingest_owner", None)
+    if owner is None:
+        # Keep direct ASGI/test consumers useful outside a lifespan while
+        # production requests always use the lifespan-owned coordinator.
+        return await asyncio.to_thread(ingest.run_ingest, "manual")
+    return await asyncio.to_thread(owner.run, "manual")
 
 
 @app.get("/api/events")
 async def event_stream(request: Request):
+    """Open the ingest-completion SSE stream for the dashboard."""
     return await _event_stream(request)
 
 
 @app.get("/")
 async def root_index(request: Request) -> Response:
+    """Serve the cache-busted shell with per-session runtime configuration."""
     html = (_PUBLIC / "index.html").read_text(encoding="utf-8")
     backend_url = os.environ.get("BACKEND_URL", "/")
     is_guest = bool(getattr(request.state, "is_guest", False))
@@ -347,6 +429,7 @@ async def root_index(request: Request) -> Response:
 
 @app.get("/app.css")
 async def root_css() -> Response:
+    """Serve the dashboard stylesheet with a no-cache response policy."""
     return FileResponse(
         str(_PUBLIC / "app.css"),
         media_type="text/css",

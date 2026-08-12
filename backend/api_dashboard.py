@@ -22,6 +22,11 @@ from backend.api_common import (
 )
 from backend.cache import cache_response
 
+# The aggregate builder mirrors the dashboard's six-query read model in one
+# repeatable-read transaction; splitting it would make snapshot consistency
+# harder to audit.
+# pylint: disable=too-many-locals
+
 
 router = APIRouter()
 
@@ -330,6 +335,7 @@ def dashboard_route(
     repository: str | None = Query(None),
     fresh: int = Query(0),
 ) -> dict:
+    """Serve the current-state dashboard for the middleware-resolved viewer."""
     visibility = "guest" if bool(getattr(request.state, "is_guest", False)) else "authenticated"
     return dashboard(
         rng=rng,

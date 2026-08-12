@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -103,6 +104,77 @@ def test_lifespan_opens_pools_and_schedules_complete_startup_and_hourly_ingest(
     assert close_calls == [True]
 
 
+@pytest.mark.asyncio
+async def test_real_scheduler_drains_blocked_ingest_before_closing_pools(
+    monkeypatch,
+):
+    """A running APScheduler worker must finish before lifespan teardown closes DB."""
+    from apscheduler.events import EVENT_JOB_ERROR
+    from apscheduler.schedulers.background import BackgroundScheduler as RealScheduler
+
+    from backend import app as app_module
+
+    started = threading.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    order: list[str] = []
+    scheduler_holder = []
+
+    class RecordingScheduler(RealScheduler):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.job_errors = []
+            self.add_listener(self.job_errors.append, EVENT_JOB_ERROR)
+            scheduler_holder.append(self)
+
+    class Pool:
+        closed = False
+
+        def open(self, **kwargs):
+            del kwargs
+
+        def close(self, **kwargs):
+            del kwargs
+            order.append("pools-closed")
+            closed.set()
+
+    pool = Pool()
+
+    def open_pools(*, wait=True):
+        del wait
+        return pool, pool
+
+    def blocked_ingest(trigger):
+        order.append(f"started:{trigger}")
+        started.set()
+        while not release.wait(0.01):
+            if closed.is_set():
+                raise AssertionError("pool closed while ingest was still running")
+        order.append(f"finished:{trigger}")
+        return {"skipped": False}
+
+    monkeypatch.setattr(app_module.db, "open_pools", open_pools)
+    monkeypatch.setattr(app_module.db, "close_pools", pool.close)
+    monkeypatch.setattr(app_module.db, "schema_check", lambda: None)
+    monkeypatch.setattr(app_module, "BackgroundScheduler", RecordingScheduler)
+    monkeypatch.setattr(app_module.ingest, "run_ingest", blocked_ingest)
+
+    context = app_module.lifespan(app_module.app)
+    await context.__aenter__()
+    assert await asyncio.to_thread(started.wait, 2)
+
+    shutdown = asyncio.create_task(context.__aexit__(None, None, None))
+    await asyncio.sleep(0.05)
+    assert not shutdown.done()
+    assert not closed.is_set()
+
+    release.set()
+    await asyncio.wait_for(shutdown, timeout=2)
+    assert closed.is_set()
+    assert order.index("finished:startup") < order.index("pools-closed")
+    assert scheduler_holder[-1].job_errors == []
+
+
 def test_guest_can_load_static_shell_with_safe_session_injection_and_hashes(
     isolated_app, monkeypatch
 ):
@@ -164,7 +236,10 @@ def test_admin_ingest_requires_constant_time_token_and_same_origin(
     assert response.json()["skipped"] is False
     assert scheduled_calls[-1] == "manual"
     assert compare_calls
-    assert any(left == "correct-token" and right == "correct-token" for left, right in compare_calls)
+    assert any(
+        left == "correct-token" and right == "correct-token"
+        for left, right in compare_calls
+    )
 
 
 def test_authenticated_and_guest_api_paths_use_production_middleware(

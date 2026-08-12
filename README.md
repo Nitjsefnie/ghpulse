@@ -81,10 +81,10 @@ lock makes an overlapping run return a truthful `skipped` result.
 
 The FastAPI lifespan opens both pools, starts one startup complete ingest in an
 APScheduler worker, and runs the same complete ingest hourly. Shutdown signals
-SSE clients, stops the scheduler without waiting on a slow source request,
-clears the broadcaster, and closes both pools. There is no separate timer,
-weekly sync, resync mode, incremental mode, export mode, or fabricated full-vs-
-incremental distinction.
+SSE clients, stops new scheduler admission, drains every in-flight complete
+ingest while its pools remain open, clears the broadcaster, and only then
+closes both pools. There is no separate timer, weekly sync, resync mode,
+incremental mode, export mode, or fabricated full-vs-incremental distinction.
 
 For operations, see [`examples/ghpulse.service`](examples/ghpulse.service).
 
@@ -114,6 +114,14 @@ python3 -m pyright
 python3 -m pylint backend
 python3 -m pycodestyle backend tests
 python3 -m ruff check backend tests
+```
+
+The canonical control-character audit is a local/release gate and is not
+invoked by hosted CI (the script is supplied by the agent bundle, not this
+repository):
+
+```bash
+python3 /root/.agent-bundle/scripts/ctrlchar_audit.py --repo . --strict
 ```
 
 Frontend contracts use the real `src/dashboard-charts.jsx` and `src/app.jsx`

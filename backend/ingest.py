@@ -17,6 +17,13 @@ from typing import Any, Iterator
 
 from backend import cache, db, events, github_source
 
+# The validator intentionally uses exact type checks and a single explicit
+# boundary function; its branches/locals are the security contract, not a
+# generic application routine. Cleanup and post-commit hooks also deliberately
+# catch broad failures so the committed snapshot remains authoritative.
+# pylint: disable=unidiomatic-typecheck,too-many-locals,too-many-branches
+# pylint: disable=too-many-statements,too-many-arguments,too-many-positional-arguments
+# pylint: disable=broad-exception-caught
 
 log = logging.getLogger("ghpulse.ingest")
 
@@ -252,7 +259,9 @@ def _validate_snapshot(snapshot: Any) -> tuple[datetime, str, list[dict], list[d
                 raise SourceError("invalid issue state")
             if state == "OPEN" and (closed_at is not None or reason not in {None, "REOPENED"}):
                 raise SourceError("open issue has inconsistent final-state fields")
-            if state == "CLOSED" and (closed_at is None or reason not in {"COMPLETED", "NOT_PLANNED"}):
+            if state == "CLOSED" and (
+                closed_at is None or reason not in {"COMPLETED", "NOT_PLANNED"}
+            ):
                 raise SourceError("closed issue has inconsistent final-state fields")
             return {
                 "node_id": node_id,

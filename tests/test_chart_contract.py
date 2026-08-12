@@ -23,7 +23,7 @@ def test_chart_exports_the_public_component_and_pure_helper():
 
 def test_chart_keeps_claudit_responsive_geometry_hooks():
     src = CHARTS_JSX.read_text(encoding="utf-8")
-    panel = src[src.index("function StackedCumulativeTimeSeriesPanel") :]
+    panel = src[src.index("function StackedCumulativeTimeSeriesPanel"):]
     assert "new ResizeObserver" in panel
     assert "useLayoutEffect" in panel
     assert "getComputedTextLength" in panel
@@ -38,7 +38,7 @@ def test_chart_keeps_claudit_responsive_geometry_hooks():
 
 def test_chart_renders_stacked_bars_and_one_cumulative_line_per_series():
     src = CHARTS_JSX.read_text(encoding="utf-8")
-    panel = src[src.index("function StackedCumulativeTimeSeriesPanel") :]
+    panel = src[src.index("function StackedCumulativeTimeSeriesPanel"):]
     assert "safeSeries.map" in panel
     assert "buildStackedBarSegments(" in panel
     assert "cumulative[item.key]" in panel
@@ -48,7 +48,7 @@ def test_chart_renders_stacked_bars_and_one_cumulative_line_per_series():
 
 def test_tooltip_is_explicit_about_counts_and_selected_range_percentages():
     src = CHARTS_JSX.read_text(encoding="utf-8")
-    panel = src[src.index("function StackedCumulativeTimeSeriesPanel") :]
+    panel = src[src.index("function StackedCumulativeTimeSeriesPanel"):]
     assert "buildTooltipLines(" in panel
     assert "unique" not in panel.lower()
 
@@ -67,7 +67,8 @@ def test_full_jsx_parses_through_the_bun_no_build_transpiler():
       const src = fs.readFileSync({str(CHARTS_JSX)!r}, 'utf8');
       const transpiler = new Bun.Transpiler({{loader: 'jsx', target: 'es2020'}});
       const output = transpiler.transformSync(src);
-      console.log(JSON.stringify({{length: output.length, hasComponent: output.includes('StackedCumulativeTimeSeriesPanel')}}));
+      console.log(JSON.stringify({{length: output.length,
+        hasComponent: output.includes('StackedCumulativeTimeSeriesPanel')}}));
     """
     proc = subprocess.run(
         ["bun", "-e", script], cwd=ROOT, capture_output=True,
@@ -91,6 +92,8 @@ def test_pure_contract_helpers_are_exposed_for_executable_validation():
 
 def test_tooltip_helper_uses_the_production_value_formatter():
     src = CHARTS_JSX.read_text(encoding="utf-8")
-    helper = src[src.index("function buildTooltipLines") : src.index("function wrapLegendLabel")]
+    helper = src[
+        src.index("function buildTooltipLines"):src.index("function wrapLegendLabel")
+    ]
     assert "humanFmt(" in helper
     assert "tooltipFmt" not in src

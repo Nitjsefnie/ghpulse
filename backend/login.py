@@ -104,7 +104,8 @@ _LOGIN_HTML = """<!DOCTYPE html>
 
 
 @router.get("/login")
-async def login_page(request: Request) -> HTMLResponse:
+async def login_page() -> HTMLResponse:
+    """Render the password and guest sign-in form."""
     return HTMLResponse(_LOGIN_HTML.format(err=""))
 
 
@@ -114,6 +115,7 @@ async def login_post(
     user_id: str = Form(""),
     password: str = Form(""),
 ) -> Response:
+    """Authenticate one numeric user ID and issue a signed session cookie."""
     ip = request.client.host if request.client else "unknown"
     if _check_login_rate_limit(ip):
         return Response(
@@ -152,14 +154,15 @@ async def login_post(
 
 
 @router.get("/logout")
-async def logout(request: Request) -> Response:
+async def logout() -> Response:
+    """Clear the browser session and return to the login form."""
     response = RedirectResponse("/login", status_code=303)
     response.delete_cookie(session_mod.SESSION_COOKIE_NAME, path="/")
     return response
 
 
 @router.post("/login/guest")
-async def login_guest(request: Request) -> Response:
+async def login_guest() -> Response:
     """Mint an unauthenticated guest session for public aggregate views.
 
     The session middleware keeps this identity read-only while allowing the

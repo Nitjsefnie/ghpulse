@@ -18,6 +18,10 @@ import asyncio
 import json
 import threading
 
+# The broadcaster's loop reference is intentionally process-global so
+# scheduler/request threads can publish to the one serving event loop.
+# pylint: disable=invalid-name,global-statement
+
 _subscribers: set[asyncio.Queue] = set()
 _subscribers_lock = threading.Lock()
 _main_loop: asyncio.AbstractEventLoop | None = None
@@ -60,6 +64,7 @@ def signal_shutdown() -> None:
 
 
 def subscribe() -> asyncio.Queue:
+    """Register one SSE queue and return it to the stream generator."""
     q: asyncio.Queue = asyncio.Queue(maxsize=16)
     with _subscribers_lock:
         _subscribers.add(q)
@@ -67,6 +72,7 @@ def subscribe() -> asyncio.Queue:
 
 
 def unsubscribe(q: asyncio.Queue) -> None:
+    """Remove a stream queue after its client disconnects."""
     with _subscribers_lock:
         _subscribers.discard(q)
 

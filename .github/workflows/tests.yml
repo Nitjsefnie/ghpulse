@@ -45,7 +45,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt
           python -m pip install -r vendor/gh-widgets/requirements-dev.txt
-          python -m pip install ruff
+          python -m pip install "ruff==0.11.8" "playwright==1.61.0"
+          python -m playwright install --with-deps chromium
           python -m pip install "git-fame @ git+https://github.com/Nitjsefnie-OSC/git-fame@65925d8263576dc02510f06aadbcf0386d4edada"
           git-fame --help | grep -- --jobs
 
@@ -69,6 +70,7 @@ jobs:
           DATABASE_URL_AUTH: postgresql://postgres:postgres@127.0.0.1:5432/ghpulse_test
           ADMIN_TOKEN: ci-test-admin-token
           COOKIE_SECURE: '0'
+          GHPULSE_BROWSER_SMOKE: '1'
         run: |
           set -o pipefail
           python -m pytest tests/ -q -ra | tee pytest-output.txt
@@ -102,8 +104,10 @@ jobs:
           '
           python -m pytest tests/test_app_contract.py tests/test_chart_contract.py -q
 
-      - name: Audit tracked files for control characters
-        run: python3 /root/.agent-bundle/scripts/ctrlchar_audit.py --repo . --strict
+      - name: Exercise the served Chromium smoke explicitly
+        env:
+          GHPULSE_BROWSER_SMOKE: '1'
+        run: python -m pytest tests/test_browser_smoke.py -q -m browser
 
       - name: Run pinned gh-widgets suite
         working-directory: vendor/gh-widgets

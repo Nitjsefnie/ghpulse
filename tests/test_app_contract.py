@@ -105,8 +105,12 @@ def test_pure_app_contract_normalizes_api_payload_and_query_state():
              "opened": 2, "completed": 1, "not_planned": 0},
         ],
         "pull_requests": [],
-        "summary": {"repositories": 1, "issues": {"opened": 2},
-                     "pull_requests": {}, "last_ingest": "2026-08-08T00:00:00Z"},
+        "summary": {
+            "repositories": 1,
+            "issues": {"opened": 2},
+            "pull_requests": {},
+            "last_ingest": "2026-08-08T00:00:00Z",
+        },
         "repositories": [{"node_id": "R_1", "name_with_owner": "external/repo"}],
     }
     script = f"""
@@ -270,8 +274,10 @@ def test_dashboard_request_state_suppresses_out_of_order_results_and_accepts_den
           range: '7d', repository: 'R_2', bucket_s: 3600,
           start: '2026-08-01T00:00:00Z', end: '2026-08-08T00:00:00Z',
           issues: [
-            {start: '2026-08-01T00:00:00Z', end: '2026-08-02T00:00:00Z', opened: 2, completed: 1, not_planned: 0},
-            {start: '2026-08-02T00:00:00Z', end: '2026-08-08T00:00:00Z', opened: 0, completed: 0, not_planned: 1},
+            {start: '2026-08-01T00:00:00Z', end: '2026-08-02T00:00:00Z',
+              opened: 2, completed: 1, not_planned: 0},
+            {start: '2026-08-02T00:00:00Z', end: '2026-08-08T00:00:00Z',
+              opened: 0, completed: 0, not_planned: 1},
           ], pull_requests: [], summary: {}, repositories: [],
         };
         coordinator.load({range: '7d', repository: 'R_1'});
@@ -306,9 +312,12 @@ def test_dashboard_payload_buckets_feed_production_chart_geometry_exactly():
           range: '7d', repository: 'R_2', bucket_s: 3600,
           start: '2026-08-01T00:00:00Z', end: '2026-08-01T03:00:00Z',
           issues: [
-            {start: '2026-08-01T00:00:00Z', end: '2026-08-01T01:00:00Z', opened: 2, completed: 1, not_planned: 0},
-            {start: '2026-08-01T01:00:00Z', end: '2026-08-01T02:00:00Z', opened: 0, completed: 0, not_planned: 1},
-            {start: '2026-08-01T02:00:00Z', end: '2026-08-01T03:00:00Z', opened: 1, completed: 0, not_planned: 0},
+            {start: '2026-08-01T00:00:00Z', end: '2026-08-01T01:00:00Z',
+              opened: 2, completed: 1, not_planned: 0},
+            {start: '2026-08-01T01:00:00Z', end: '2026-08-01T02:00:00Z',
+              opened: 0, completed: 0, not_planned: 1},
+            {start: '2026-08-01T02:00:00Z', end: '2026-08-01T03:00:00Z',
+              opened: 1, completed: 0, not_planned: 0},
           ],
           pull_requests: [], summary: {}, repositories: [],
         };

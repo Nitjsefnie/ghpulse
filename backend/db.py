@@ -13,6 +13,11 @@ from typing import cast
 from psycopg.abc import Query
 from psycopg_pool import ConnectionPool
 
+# These globals are the deliberate process-local pool registry. The broad
+# close guard is limited to cleanup: a failed close must not mask the original
+# startup/test failure.
+# pylint: disable=global-statement,broad-exception-caught
+
 _VIZ: ConnectionPool | None = None
 _AUTH: ConnectionPool | None = None
 
@@ -31,6 +36,7 @@ def sql_text(query: str) -> Query:
 
 
 def viz_pool() -> ConnectionPool:
+    """Return the lazily constructed visualization pool."""
     global _VIZ
     if _VIZ is None:
         _VIZ = ConnectionPool(
@@ -64,6 +70,7 @@ def reset_viz_pool() -> None:
 
 
 def auth_pool() -> ConnectionPool:
+    """Return the lazily constructed authentication pool."""
     global _AUTH
     if _AUTH is None:
         _AUTH = ConnectionPool(
@@ -116,6 +123,7 @@ def _ensure_open(pool: ConnectionPool) -> None:
 
 @contextmanager
 def viz_conn():
+    """Yield one connection from the visualization pool."""
     pool = viz_pool()
     _ensure_open(pool)
     with pool.connection() as conn:
@@ -124,6 +132,7 @@ def viz_conn():
 
 @contextmanager
 def auth_conn():
+    """Yield one connection from the authentication pool."""
     pool = auth_pool()
     _ensure_open(pool)
     with pool.connection() as conn:

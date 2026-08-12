@@ -45,6 +45,7 @@ def set_session_cookie(response: Response, token: str) -> None:
 
 
 def parse_session_token(token: str):
+    """Parse a signed session token into its four wire components."""
     parts = token.split(".")
     if len(parts) != 4:
         return None
@@ -60,6 +61,7 @@ def parse_session_token(token: str):
 
 
 def make_session_token(user_id: int, secret: str) -> str:
+    """Create a timestamped HMAC-signed browser session token."""
     issued_at = int(time.time())
     nonce = secrets.token_urlsafe(10)
     payload = f"{user_id}.{issued_at}.{nonce}"
@@ -70,6 +72,7 @@ def make_session_token(user_id: int, secret: str) -> str:
 
 
 def verify_session_token(token: str, secret: str):
+    """Validate signature and lifetime, returning the embedded user ID."""
     parsed = parse_session_token(token)
     if parsed is None:
         return None
@@ -89,6 +92,7 @@ def verify_session_token(token: str, secret: str):
 
 
 def get_or_create_session_secret(config: dict) -> str:
+    """Read or initialize the per-user signing secret in a config mapping."""
     secret = str(config.get(WEB_SESSION_SECRET_KEY, "")).strip()
     if secret:
         return secret
@@ -120,10 +124,12 @@ def write_user_config(user_id: int, config: dict) -> None:
 
 
 def make_guest_session_token() -> str:
+    """Mint a short-lived guest token signed by the process secret."""
     return make_session_token(GUEST_USER_ID, _GUEST_SECRET)
 
 
 def resolve_session_user_id(token: str) -> int | None:
+    """Resolve a guest or external-user token to its authenticated ID."""
     parsed = parse_session_token(token)
     if parsed is None:
         return None
@@ -140,6 +146,7 @@ def resolve_session_user_id(token: str) -> int | None:
 
 
 def check_origin(request: Request) -> bool:
+    """Accept safe methods or same-host mutation origins/referers."""
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return True
     origin = request.headers.get("origin", "")
@@ -209,6 +216,7 @@ def _session_denied(request: Request) -> Response | None:
 
 
 async def auth_middleware(request: Request, call_next):
+    """Apply public, admin-token, session, and guest route boundaries."""
     path = request.url.path
     if path in _AUTH_PUBLIC_PATHS:
         return await call_next(request)
