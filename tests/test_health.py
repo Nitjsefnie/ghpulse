@@ -142,6 +142,7 @@ def test_health_preserves_last_success_and_exposes_failed_ingest(monkeypatch):
 
 def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatch):
     from backend import app as app_module
+    operator_errors = []
 
     @contextmanager
     def broken_connection():
@@ -149,6 +150,11 @@ def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatc
         yield  # pragma: no cover
 
     monkeypatch.setattr(app_module.db, "viz_conn", broken_connection)
+    monkeypatch.setattr(
+        app_module._log,
+        "exception",
+        lambda message: operator_errors.append(message),
+    )
 
     response = TestClient(app_module.app).get("/health")
 
@@ -159,3 +165,4 @@ def test_health_returns_unhealthy_status_when_database_is_unavailable(monkeypatc
     assert body["error"] == "database unavailable"
     assert body["error_code"] == "DATABASE_UNAVAILABLE"
     assert "sentinel-database-secret" not in str(body)
+    assert operator_errors == ["health database check failed"]

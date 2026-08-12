@@ -96,6 +96,20 @@ def test_uvicorn_served_page_mounts_exactly_two_panels_without_browser_errors(
             "generated_at": "2026-08-12T00:00:00+00:00",
         },
     )
+    monkeypatch.setattr(
+        dashboard_module,
+        "_overlay_sync_status",
+        lambda body: {
+            **body,
+            "summary": {
+                **body["summary"],
+                "sync_status": "success",
+                "sync_last_attempt_at": "2026-08-12T00:00:00+00:00",
+                "sync_error_code": None,
+                "sync_error": None,
+            },
+        },
+    )
 
     port = _free_port()
     server = Server(

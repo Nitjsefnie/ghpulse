@@ -402,7 +402,8 @@ def health() -> Response:
     """Return database, ingest-progress, and freshness state."""
     try:
         return ORJSONResponse(_health_payload())
-    except Exception as exc:  # pylint: disable=broad-exception-caught
+    except Exception:  # pylint: disable=broad-exception-caught
+        _log.exception("health database check failed")
         return JSONResponse(
             {
                 "ok": False,
