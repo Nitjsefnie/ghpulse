@@ -86,7 +86,14 @@ _DASHBOARD_STAT_LABEL_PROBE = """
       jsxFragmentFactory: 'React.Fragment',
     }}),
   });
-  eval(transpiler.transformSync(src));
+  const compiled = transpiler.transformSync(src);
+  // The tsconfig above selects the classic runtime so the output can be
+  // evaluated against the recording React below. Fail loudly rather than
+  // rendering nothing if a Bun version stops honouring it.
+  if (!compiled.includes('React.createElement')) {
+    throw new Error('expected the classic JSX runtime from Bun.Transpiler');
+  }
+  eval(compiled);
   const view = window.ghpulseAppContract.dashboardToViewModel({
     range: '7d',
     bucket_s: 3600,
