@@ -563,8 +563,6 @@ function DashboardView({view}) {
   const summary = view.summary || {};
   const issues = summary.issues || {};
   const pullRequests = summary.pull_requests || {};
-  const ingest = formatLastIngest(summary.last_ingest);
-  const sync = formatSyncStatus(summary, ingest);
   const hasIssueEvents = view.issues.events.some(bucket =>
     ISSUE_SERIES.some(series => Number(bucket[series.key]) > 0));
   const hasPullRequestEvents = view.pullRequests.events.some(bucket =>
@@ -575,8 +573,6 @@ function DashboardView({view}) {
         summary={summary}
         issues={issues}
         pullRequests={pullRequests}
-        ingest={ingest}
-        sync={sync}
       />
       <div className="dash-grid ghpulse-panel-grid">
         <PanelShell title="External Issues" empty={!hasIssueEvents} emptyText="No external issue activity in this range.">
@@ -611,7 +607,7 @@ function PanelShell({title, empty, emptyText, children}) {
   );
 }
 
-function SummaryStrip({summary, issues, pullRequests, ingest, sync}) {
+function SummaryStrip({summary, issues, pullRequests}) {
   const values = [
     {label: 'external repositories', value: summary.repositories || 0},
     {label: 'issues opened', value: issues.opened || 0, color: SERIES_COLORS.opened},
@@ -622,8 +618,6 @@ function SummaryStrip({summary, issues, pullRequests, ingest, sync}) {
     {label: 'pull requests merged', value: pullRequests.merged || 0, color: SERIES_COLORS.merged},
     {label: 'pull requests closed unmerged', value: pullRequests.closed_unmerged || 0, color: SERIES_COLORS.closed_unmerged},
     {label: 'pull requests currently open', value: pullRequests.currently_open || 0},
-    {label: 'last ingest', value: ingest.label, warn: ingest.stale},
-    {label: 'ingest status', value: sync.label, warn: sync.stale},
   ];
   return (
     <div className="dash-summary ghpulse-summary">

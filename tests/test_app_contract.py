@@ -32,7 +32,6 @@ def test_app_source_is_the_two_panel_surface():
         "pull requests opened",
         "pull requests merged",
         "pull requests closed unmerged",
-        "last ingest",
     ):
         assert label in src.lower()
 
@@ -56,6 +55,109 @@ def test_app_does_not_restore_claudit_transcript_or_upload_surfaces():
 def test_app_does_not_render_server_exception_details():
     src = APP_JSX.read_text(encoding="utf-8")
     assert "body.detail" not in src
+
+
+_DASHBOARD_STAT_LABEL_PROBE = """
+  const fs = require('fs');
+  global.window = {};
+  // The served shell supplies React globally from public/index.html. A
+  // recording createElement is enough to read the rendered element tree
+  // without a DOM, and keeps this contract on the real component.
+  global.React = {
+    createElement: (type, props, ...children) => ({
+      type,
+      props: props || {},
+      children: children.flat(Infinity),
+    }),
+    Fragment: 'Fragment',
+    useState: () => [],
+    useEffect: () => {},
+    useMemo: () => {},
+    useCallback: () => {},
+    useRef: () => ({}),
+  };
+  const src = fs.readFileSync('src/app.jsx', 'utf8');
+  const transpiler = new Bun.Transpiler({
+    loader: 'jsx',
+    target: 'es2020',
+    tsconfig: JSON.stringify({compilerOptions: {
+      jsx: 'react',
+      jsxFactory: 'React.createElement',
+      jsxFragmentFactory: 'React.Fragment',
+    }}),
+  });
+  eval(transpiler.transformSync(src));
+  const view = window.ghpulseAppContract.dashboardToViewModel({
+    range: '7d',
+    bucket_s: 3600,
+    start: '2026-08-01T00:00:00Z',
+    end: '2026-08-08T00:00:00Z',
+    issues: [],
+    pull_requests: [],
+    summary: {
+      repositories: 1,
+      issues: {opened: 2},
+      pull_requests: {opened: 1},
+      last_ingest: '2026-08-01T00:00:00Z',
+      sync_status: 'failure',
+    },
+    repositories: [],
+  });
+  const labels = [];
+  const walk = node => {
+    if (!node || typeof node !== 'object') return;
+    // Expand nested function components so this reads the whole rendered
+    // dashboard, not just DashboardView's immediate element.
+    if (typeof node.type === 'function') {
+      walk(node.type({...node.props, children: node.children}));
+      return;
+    }
+    if (node.props && node.props.className === 'stat-label') {
+      labels.push(node.children.join(''));
+    }
+    (node.children || []).forEach(walk);
+  };
+  walk(DashboardView({view}));
+  console.log(JSON.stringify(labels));
+"""
+
+
+def _rendered_dashboard_stat_labels() -> list[str]:
+    """Render the real DashboardView through the no-build JSX pipeline.
+
+    This reads what the browser is actually handed rather than what the
+    source file happens to mention, so a tile cannot survive as dead markup.
+    """
+    proc = subprocess.run(
+        ["bun", "-e", _DASHBOARD_STAT_LABEL_PROBE],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(proc.stdout)
+
+
+def test_dashboard_renders_activity_stats_without_operator_ingest_tiles():
+    """Ingest freshness is operator diagnostics and belongs to /health only."""
+    labels = _rendered_dashboard_stat_labels()
+
+    for expected in (
+        "external repositories",
+        "issues opened",
+        "issues completed",
+        "issues not planned",
+        "issues currently open",
+        "pull requests opened",
+        "pull requests merged",
+        "pull requests closed unmerged",
+        "pull requests currently open",
+    ):
+        assert expected in labels
+    for forbidden in ("last ingest", "ingest status"):
+        assert forbidden not in labels
 
 
 def test_index_loads_react_babel_chart_before_app_and_mounts_app():
