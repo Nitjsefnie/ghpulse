@@ -48,6 +48,7 @@ def viz_pool() -> ConnectionPool:
             # never exercised; it would now be the bottleneck.
             min_size=2, max_size=20, timeout=10,
             kwargs={"autocommit": False},
+            check=ConnectionPool.check_connection,
             # Pool ownership belongs to the FastAPI lifespan.  psycopg-pool's
             # implicit eager-open path is deprecated and also binds async
             # pool state to whichever loop happened to import this module.
@@ -77,6 +78,7 @@ def auth_pool() -> ConnectionPool:
             os.environ.get("DATABASE_URL_AUTH", "postgresql:///auth"),
             min_size=1, max_size=4, timeout=10,
             kwargs={"autocommit": True},
+            check=ConnectionPool.check_connection,
             open=False,
         )
     return _AUTH
