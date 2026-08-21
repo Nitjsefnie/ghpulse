@@ -38,7 +38,7 @@ Run the commands that apply to the change and include their actual results in
 the PR:
 
 ```bash
-python3 -m pytest tests/ -q
+python3 -m pytest tests/ -q --cov=backend
 python3 -m pyright
 python3 -m pylint backend
 python3 -m pycodestyle backend tests
@@ -47,10 +47,28 @@ python3 -m unittest discover -v -s vendor/gh-widgets
 python3 /root/.agent-bundle/scripts/ctrlchar_audit.py
 ```
 
+`pip install -r requirements-dev.txt -r requirements-test.txt` gets the
+pinned toolchain, and `-r backend/requirements.txt` the pinned runtime
+deps. Run the checks against an environment holding both: pyright resolves
+third-party types from the installed packages, so a stale local one
+disagrees with CI.
+
 The frontend is intentionally no-build: React and Babel load before the chart
 and app JSX modules. Exercise the executable Bun/Node contracts whenever
 frontend or static serving changes. Do not turn a missing CI dependency into a
 pytest skip.
+
+Six workflows run, not one. Besides `tests.yml` there are `codeql`
+(security analysis, weekly cron), `audit` (`pip-audit` over every
+requirements file, daily cron), `actionlint` (lints the workflow YAML
+itself), `speed` (benchmarks this commit against the last release on the
+same runner, excluding browser tests, fails at >30%), and `release` (tags
+`v<VERSION>` once every other check on the commit passes). Coverage is
+gated at 87% inside `tests.yml` — a ratchet under the current number, not
+a target.
+
+Cut a release by editing the root `VERSION` file: one bare semver line, no
+leading `v`.
 
 ## Security and operations
 
