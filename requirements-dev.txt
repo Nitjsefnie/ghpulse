@@ -1,0 +1,12 @@
+# Lint / type-check toolchain, pinned so a tool release cannot turn CI red
+# on an unchanged commit.
+#
+# These used to be pinned inline inside tests.yml's install step, which
+# made them invisible to dependabot and impossible to install locally with
+# one command. pyright, pylint and pycodestyle are added here explicitly:
+# the workflow already RAN all three, it just never declared them, so they
+# arrived as transitive dependencies of whatever else was installed.
+pycodestyle==2.14.0
+pylint==4.0.7
+pyright==1.1.411
+ruff==0.11.8
