@@ -24,7 +24,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 from backend import db  # noqa: E402  # pylint: disable=wrong-import-position
 db.load_dotenv(str(_REPO_ROOT / ".env"))
 
-from backend import api, cache, events, ingest, login, session  # noqa: E402  # pylint: disable=wrong-import-position
+from backend import api, cache, events, ingest, login, session, version  # noqa: E402  # pylint: disable=wrong-import-position
 from backend.api_common import (  # noqa: E402  # pylint: disable=wrong-import-position
     DATABASE_UNAVAILABLE_CODE,
     DATABASE_UNAVAILABLE_MESSAGE,
@@ -221,6 +221,11 @@ def _health_payload() -> dict:
     return {
         "ok": True,
         "db": True,
+        # Which build is answering. The DB-error branch in health() reports
+        # it too: "which version is broken" is exactly the question asked
+        # when /health is failing, so it must not be the field that goes
+        # missing.
+        "version": version.VERSION,
         "ingest_running": running,
         "ingest_progress": progress,
         "last_success": last_success,
@@ -408,6 +413,7 @@ def health() -> Response:
             {
                 "ok": False,
                 "db": False,
+                "version": version.VERSION,
                 "error": DATABASE_UNAVAILABLE_MESSAGE,
                 "error_code": DATABASE_UNAVAILABLE_CODE,
                 "now": datetime.now(timezone.utc).isoformat(),
