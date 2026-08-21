@@ -3,9 +3,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from backend import auth
 from backend import login as login_mod
 from backend import session as session_mod
-from backend import auth
 
 
 @pytest.fixture(autouse=True)

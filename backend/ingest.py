@@ -8,12 +8,13 @@ removed only after every source record has been validated and upserted.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from datetime import datetime, timezone
 import logging
 import os
 import threading
-from typing import Any, Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any
 
 from backend import cache, db, events, github_source
 from backend.api_common import SYNC_FAILURE_CODE, SYNC_FAILURE_MESSAGE

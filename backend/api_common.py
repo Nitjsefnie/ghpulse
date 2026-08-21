@@ -7,14 +7,14 @@ never has to infer the extent from a representative timestamp.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
 import logging
 import os
 import re
 import time
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 
@@ -73,7 +73,7 @@ def read_transaction() -> Iterator:
 class Phases:
     """Collect labelled phase timings and emit one optional timing line."""
 
-    __slots__ = ("_name", "_marks", "_t0")
+    __slots__ = ("_marks", "_name", "_t0")
 
     def __init__(self, name: str) -> None:
         self._name = name

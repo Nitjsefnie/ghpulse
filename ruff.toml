@@ -1,0 +1,48 @@
+# Explicit rule selection, and that is the whole point of this file.
+#
+# There was no ruff config here before, so ruff ran with whatever rule set
+# the installed release happened to default to. That is not a policy, it is
+# a coincidence — and it fails in both directions across a version bump:
+#
+#   * 0.11.8 -> 0.16.3 surfaced 46 findings on unchanged code, because the
+#     default set had grown. A dependency bump should change the TOOL, not
+#     what the project enforces.
+#
+#   * The reverse bit harder. 0.16's default set does NOT include E402,
+#     which 0.11.8's did, so RUF100 concluded the `# noqa: E402` comments in
+#     backend/app.py were unused and deleted them. Downgrading would then
+#     have failed on three E402s whose suppressions had been auto-removed.
+#     An unpinned rule set makes noqa comments unstable.
+#
+# Selecting explicitly fixes both: the set below is what this project
+# enforces, and a ruff release changes it only when someone edits this file.
+line-length = 100
+
+[lint]
+# Chosen to match this project's existing stance, which the other gates
+# already follow: a check earns its place by finding real defects, not by
+# having an opinion about style. Everything selected here is either a
+# correctness check or a mechanical, auto-fixable tidy.
+select = [
+    "E",      # pycodestyle errors, including E402 (late imports)
+    "F",      # pyflakes — undefined names, unused imports
+    "I",      # import sorting: mechanical, auto-fixable, keeps diffs small
+    "UP",     # pyupgrade — deprecated typing imports, quoted annotations
+    "RUF",    # ruff's own, including RUF100 (unused noqa)
+]
+
+# DELIBERATELY NOT SELECTED, having been measured rather than guessed:
+#
+#   TRY  — 55 findings, 55 of them TRY003 objecting to the length of
+#          exception messages. This codebase raises with the detail a
+#          reader needs; that is a feature.
+#   S    — 21 findings, dominated by subprocess calls in the test suite
+#          (S603/S607) and by SQL built as strings (S608), which is how
+#          this app queries and is parameterised everywhere it matters.
+#   SIM  — mostly style preference (if-else vs ternary, yoda conditions).
+#   BLE  — the four blind excepts here are deliberate and each already
+#          logs; see backend/app.py and backend/db.py.
+#
+# Re-selecting any of these is a real decision with real work behind it,
+# which is exactly why it should be a visible edit to this file rather
+# than a side effect of the next version bump.

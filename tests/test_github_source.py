@@ -10,7 +10,6 @@ import pytest
 
 from backend import github_source
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "github_snapshot.json"
 
 
@@ -54,7 +53,7 @@ def test_load_snapshot_file_rejects_unknown_or_missing_nested_fields(
     path = tmp_path / f"malformed-{mutation}.json"
     path.write_text(json.dumps(body), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="(unknown|missing|required|field)"):
+    with pytest.raises(ValueError, match=r"(unknown|missing|required|field)"):
         github_source.load_snapshot_file(path)
 
 
@@ -65,7 +64,7 @@ def test_load_snapshot_file_rejects_account_owned_repository(tmp_path):
     path = tmp_path / "account-owned.json"
     path.write_text(json.dumps(body), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="(owned|external|public)"):
+    with pytest.raises(ValueError, match=r"(owned|external|public)"):
         github_source.load_snapshot_file(path)
 
 

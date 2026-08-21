@@ -11,10 +11,8 @@ import time
 from fastapi import APIRouter, Form, Request
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
-from backend import auth
+from backend import auth, db
 from backend import session as session_mod
-from backend import db
-
 
 router = APIRouter()
 

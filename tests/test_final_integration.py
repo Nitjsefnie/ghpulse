@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import socket
 import threading
 import time
+from pathlib import Path
 
 import httpx
 import psycopg
@@ -276,6 +276,7 @@ def test_final_production_integration(monkeypatch):
 
     from playwright.sync_api import sync_playwright
     from uvicorn import Config, Server
+
     from backend import app as app_module
 
     # Any earlier unit test may have created a pool with another DSN. Closing

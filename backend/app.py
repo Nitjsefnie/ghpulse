@@ -17,14 +17,28 @@ from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
-from starlette.responses import FileResponse, HTMLResponse, JSONResponse, Response
-from starlette.responses import StreamingResponse
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    Response,
+    StreamingResponse,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 from backend import db  # noqa: E402  # pylint: disable=wrong-import-position
+
 db.load_dotenv(str(_REPO_ROOT / ".env"))
 
-from backend import api, cache, events, ingest, login, session, version  # noqa: E402  # pylint: disable=wrong-import-position
+from backend import (  # noqa: E402  # pylint: disable=wrong-import-position
+    api,
+    cache,
+    events,
+    ingest,
+    login,
+    session,
+    version,
+)
 from backend.api_common import (  # noqa: E402  # pylint: disable=wrong-import-position
     DATABASE_UNAVAILABLE_CODE,
     DATABASE_UNAVAILABLE_MESSAGE,

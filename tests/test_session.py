@@ -105,6 +105,7 @@ def test_atomic_secret_initializer_concurrent_real_postgres_preserves_external_k
         import pytest
         pytest.skip("GHPULSE_TEST_DATABASE_URL is not configured")
     import psycopg
+
     from backend import db
     auth_dsn = os.environ.get("DATABASE_URL_AUTH", dsn)
 

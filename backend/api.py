@@ -8,10 +8,11 @@ from backend.api_common import _iso, read_transaction, utc_now
 from backend.api_dashboard import (
     _event_repository_ids,
     build_window,
+)
+from backend.api_dashboard import (
     router as dashboard_router,
 )
 from backend.cache import cache_response
-
 
 router = APIRouter(prefix="/api")
 router.include_router(dashboard_router)

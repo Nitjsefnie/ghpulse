@@ -9,6 +9,8 @@ from starlette.requests import Request
 
 from backend import db
 from backend.api_common import (
+    SYNC_FAILURE_CODE,
+    SYNC_FAILURE_MESSAGE,
     Phases,
     RangeWindow,
     _bucket_seconds,
@@ -18,8 +20,6 @@ from backend.api_common import (
     dense_bucket_bounds,
     read_transaction,
     response_bucket,
-    SYNC_FAILURE_CODE,
-    SYNC_FAILURE_MESSAGE,
     utc_now,
 )
 from backend.cache import cache_response

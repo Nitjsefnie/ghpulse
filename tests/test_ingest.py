@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import copy
-from datetime import timezone
 import json
 import os
-from pathlib import Path
 import threading
+from datetime import timezone
+from pathlib import Path
 
 import pytest
 
 from backend import db
-
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

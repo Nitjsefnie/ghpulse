@@ -16,7 +16,6 @@ from pathlib import Path
 
 from backend import version
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 VERSION_PATH = REPO_ROOT / "VERSION"
 

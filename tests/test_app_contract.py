@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 APP_JSX = ROOT / "src" / "app.jsx"
 INDEX_HTML = ROOT / "public" / "index.html"

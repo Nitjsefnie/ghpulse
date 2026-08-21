@@ -12,8 +12,9 @@ import inspect
 import logging
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any
 
 log = logging.getLogger("ghpulse.cache")
 

@@ -6,12 +6,12 @@ import hashlib
 import json
 import threading
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend import session
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class FakeScheduler:
     """Small scheduler seam which records the production job contract."""
 
-    instances: list["FakeScheduler"] = []
+    # ClassVar, not a per-instance default: this is a registry of every
+    # FakeScheduler the test constructed, and it is shared on purpose.
+    instances: ClassVar[list[FakeScheduler]] = []
 
     def __init__(self, **kwargs):
         self.kwargs = kwargs

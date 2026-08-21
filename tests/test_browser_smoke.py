@@ -26,6 +26,7 @@ def test_uvicorn_served_page_mounts_exactly_two_panels_without_browser_errors(
     playwright = pytest.importorskip("playwright.sync_api")
 
     from uvicorn import Config, Server
+
     from backend import api as api_module
     from backend import api_dashboard as dashboard_module
     from backend import app as app_module

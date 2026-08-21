@@ -7,10 +7,9 @@ data module from the checked-out submodule instead of importing whichever
 
 import importlib.util as _importlib_util
 import os as _os
-from pathlib import Path as _Path
 import sys as _sys
+from pathlib import Path as _Path
 from types import ModuleType as _ModuleType
-
 
 __all__ = ["fetch_snapshot", "load_snapshot_file"]
 

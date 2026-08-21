@@ -23,6 +23,7 @@
 !/README.md
 !/VERSION
 !/pyrightconfig.json
+!/ruff.toml
 !/requirements-dev.txt
 !/requirements-test.txt
 !/setup.cfg
@@ -88,6 +89,7 @@
 !/scripts/
 /scripts/*
 !/scripts/*.sh
+!/scripts/pre-push
 !/scripts/ci/
 /scripts/ci/*
 !/scripts/ci/*.py

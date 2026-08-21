@@ -133,20 +133,19 @@ def ensure_user_session_secret(user_id: int) -> str | None:
     serialize with the owning auth system, while ``jsonb_set`` preserves every
     current key and the no-op path performs no UPDATE at all.
     """
-    with db.auth_conn() as connection:
-        with connection.transaction():
-            row = connection.execute(
-                "SELECT config->>%s FROM users WHERE user_id = %s FOR UPDATE",
-                (WEB_SESSION_SECRET_KEY, user_id),
-            ).fetchone()
-            if row is None:
-                return None
-            existing = str(row[0] or "").strip()
-            if existing:
-                return existing
-            secret = secrets.token_urlsafe(32)
-            updated = connection.execute(
-                """
+    with db.auth_conn() as connection, connection.transaction():
+        row = connection.execute(
+            "SELECT config->>%s FROM users WHERE user_id = %s FOR UPDATE",
+            (WEB_SESSION_SECRET_KEY, user_id),
+        ).fetchone()
+        if row is None:
+            return None
+        existing = str(row[0] or "").strip()
+        if existing:
+            return existing
+        secret = secrets.token_urlsafe(32)
+        updated = connection.execute(
+            """
                 UPDATE users
                 SET config = jsonb_set(
                     COALESCE(config, '{}'::jsonb),
@@ -155,9 +154,9 @@ def ensure_user_session_secret(user_id: int) -> str | None:
                 WHERE user_id = %s
                 RETURNING config->>%s
                 """,
-                (secret, user_id, WEB_SESSION_SECRET_KEY),
-            ).fetchone()
-            return str(updated[0]) if updated else None
+            (secret, user_id, WEB_SESSION_SECRET_KEY),
+        ).fetchone()
+        return str(updated[0]) if updated else None
 
 
 def make_guest_session_token() -> str:
