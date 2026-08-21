@@ -96,6 +96,30 @@ not "tidy" one back to `@v4`: a tag is a moving pointer, and these jobs
 hold a repository token. Dependabot keeps the hashes current — including
 the `vendor/gh-widgets` submodule pin, which has the same failure mode.
 
+**`ruff.toml` states the rule set, and that is the point.** Without it ruff
+runs whatever the installed release defaults to, which is a coincidence
+rather than a policy — and it bit both ways: 0.11.8 -> 0.16.3 produced 46
+findings on unchanged code, and going back the other way was worse,
+because 0.16 does not enable E402 while 0.11.8 does, so `RUF100` deleted
+the `# noqa: E402` comments in `backend/app.py` as unused. An unpinned
+rule set makes suppressions unstable. The file records which families were
+measured and rejected, so re-selecting one is a visible edit rather than a
+side effect of the next bump. (No sibling repo has a `ruff.toml` because
+no sibling repo runs ruff.)
+
+**There is deliberately NO `.pylintrc` here.** This is the only repo in the
+family without one, and that is not an omission to correct: ghpulse scores
+10.00/10 against pylint's FULL default check set, where the sibling repos
+need thirteen `disable=` entries to reach the same score. Copying their
+config in would silently switch off thirteen checks this code currently
+passes. Suppressions here are inline `# pylint: disable=` at the line that
+needs them, which is where they can be read alongside the reason.
+
+**pylint covers `backend` only; pycodestyle and ruff cover `backend tests`.**
+Also deliberate. Widening pylint to `tests` drops it to 7.65/10, almost
+entirely `R0801` duplicate-code between test files — which is what test
+files legitimately look like.
+
 **Tool pins live in `requirements-dev.txt` / `requirements-test.txt`**,
 not inline in a workflow's install step. Inline pins are invisible to
 Dependabot and cannot be installed locally with one command, so they rot
