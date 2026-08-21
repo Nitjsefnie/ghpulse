@@ -9,4 +9,4 @@
 pycodestyle==2.14.0
 pylint==4.0.7
 pyright==1.1.411
-ruff==0.11.8
+ruff==0.16.3
