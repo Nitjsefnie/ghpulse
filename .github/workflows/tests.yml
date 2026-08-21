@@ -26,17 +26,22 @@ jobs:
 
     steps:
       - name: Check out repository and pinned renderer
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+          # Nothing in this workflow pushes. Leaving the job token in
+          # .git/config lets any later step — or anything a dependency
+          # pulls in — reuse it. The submodule is public and clones over
+          # https, so it does not need the credential either.
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.13'
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: '1.2.20'
 
@@ -45,7 +50,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt
           python -m pip install -r vendor/gh-widgets/requirements-dev.txt
-          python -m pip install "ruff==0.11.8" "playwright==1.61.0"
+          # requirements-dev.txt / requirements-test.txt rather than pins
+          # written inline here. Inline pins are invisible to dependabot
+          # and cannot be installed locally with one command, so they rot
+          # in place — which is exactly what the audit gate exists to stop.
+          python -m pip install -r requirements-dev.txt -r requirements-test.txt
+          python -m pip install "playwright==1.61.0"
           python -m playwright install --with-deps chromium
           python -m pip install "git-fame @ git+https://github.com/Nitjsefnie-OSC/git-fame@65925d8263576dc02510f06aadbcf0386d4edada"
           git-fame --help | grep -- --jobs
@@ -73,11 +83,42 @@ jobs:
           GHPULSE_BROWSER_SMOKE: '1'
         run: |
           set -o pipefail
-          python -m pytest tests/ -q -ra | tee pytest-output.txt
+          python -m pytest tests/ -q -ra --cov=backend --cov-report=term \
+            | tee pytest-output.txt
           if grep -Eq '[0-9]+ skipped' pytest-output.txt; then
             echo 'CI forbids skipped tests; provide the required dependency or fixture.' >&2
             exit 1
           fi
+
+      - name: Coverage summary
+        # Renders whether or not the gate below passes — a coverage
+        # regression is only actionable if you can see WHICH file lost
+        # lines, and re-reading a scrolled CI log to find that is exactly
+        # the friction that gets a gate disabled.
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo '### Coverage'
+            echo
+            python -m coverage report --format=markdown --precision=1
+          } >> "$GITHUB_STEP_SUMMARY"
+          python -m coverage xml -o coverage.xml
+
+      - name: Upload coverage.xml
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Coverage gate
+        if: ${{ !cancelled() }}
+        # A RATCHET, not a target. 87 sits just under the 89% measured when
+        # this landed, so ordinary churn stays green and a real regression
+        # goes red. Raise the floor by hand as coverage climbs — never
+        # lower it to make a red build green.
+        run: python -m coverage report --fail-under=87 --precision=1
 
       - name: Run static type and lint checks
         run: |
@@ -88,6 +129,10 @@ jobs:
 
       - name: Exercise Bun JSX transpilation and loading order
         run: |
+          # shellcheck disable=SC2016
+          # The `${file}` below is inside a JavaScript template literal
+          # passed to `bun -e`, not a shell expansion. Single quotes are
+          # exactly right here: the shell must NOT touch it.
           bun -e '
             const fs = require("fs");
             const files = ["src/dashboard-charts.jsx", "src/app.jsx"];
