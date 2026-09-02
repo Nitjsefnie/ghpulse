@@ -7,6 +7,6 @@
 # the workflow already RAN all three, it just never declared them, so they
 # arrived as transitive dependencies of whatever else was installed.
 pycodestyle==2.14.0
-pylint==4.0.7
+pylint==4.0.8
 pyright==1.1.411
 ruff==0.16.3
