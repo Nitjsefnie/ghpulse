@@ -8,5 +8,5 @@
 # arrived as transitive dependencies of whatever else was installed.
 pycodestyle==2.14.0
 pylint==4.0.7
-pyright==1.1.411
+pyright==1.1.414
 ruff==0.16.3
